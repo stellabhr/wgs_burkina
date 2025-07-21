@@ -1,0 +1,151 @@
+---
+title: "haplotype"
+author: "Stella Bähr"
+date: "2025-05-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+##Load packages etc
+
+```{r}
+library(vcfR)
+library(adegenet)
+library(ggplot2)
+library(ggdendro)
+library(dplyr)
+library(tibble)
+
+```
+
+##Run analysis
+
+```{r}
+# Load VCF and extract sample names
+vcf <- read.vcfR("../cyp6_maf005.vcf")
+gen <- vcfR2genlight(vcf)
+geno_mat <- as.matrix(gen)
+sample_names <- rownames(geno_mat)
+
+# Extract and combine metadata
+metadata <- tibble(sample = sample_names) %>%
+  mutate(
+    status = case_when(
+      grepl("after", sample, ignore.case = TRUE) ~ "Alive",
+      grepl("prior", sample, ignore.case = TRUE) ~ "Dead",
+      TRUE ~ "Unknown"
+    ),
+    location = case_when(
+      grepl("Tie", sample, ignore.case = TRUE) ~ "Tiefora",
+      grepl("Ten", sample, ignore.case = TRUE) ~ "Tengrela",
+      TRUE ~ "Unknown"
+    ),
+    Sample = paste(location, status, sep = " ")
+  )
+
+#Clustering 
+d <- dist(geno_mat, method = "euclidean")
+hc <- hclust(d, method = "ward.D2")
+dendro <- dendro_data(hc)
+
+# Reorder metadata to match dendrogram 
+metadata_ordered <- metadata %>%
+  mutate(sample = factor(sample, levels = hc$labels[hc$order])) %>%
+  arrange(sample) %>%
+  mutate(x = 1:n())
+
+custom_colors <- c(
+  "Tengrela Alive" = "#B22222",
+  "Tiefora Alive"  = "#F08080",
+  "Tengrela Dead"  = "#1E90FF",
+  "Tiefora Dead"   = "#ADD8E6" 
+)
+
+#First Plot just to check
+ggplot() +
+  geom_segment(data = segment(dendro),
+               aes(x = x, y = y, xend = xend, yend = yend)) +
+  geom_tile(data = metadata_ordered,
+            aes(x = x, y = -5, fill = Sample),
+            width = 1, height = 4) +
+  scale_y_continuous(
+    name = "Genetic distance",
+    expand = expansion(mult = c(0.1, 0.05))
+  ) +
+  scale_fill_manual(values = custom_colors) +
+  labs(title = "Haplotype Dendrogram with Combined Location/Status") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.x = element_blank(),
+    panel.grid = element_blank(),
+    legend.title = element_blank()
+  )
+
+
+#lets go with 3 clusters based on visual inspection
+k <- 3
+clusters <- cutree(hc, k = k)
+metadata_ordered$cluster <- factor(clusters[as.character(metadata_ordered$sample)])
+
+#plot for real this time (give a name for export)
+tips <- dendro$labels
+tips$x <- match(tips$label, metadata_ordered$sample)
+tips$cluster <- metadata_ordered$cluster[match(tips$label, metadata_ordered$sample)]
+
+haploplot <- ggplot() +
+  geom_segment(data = segment(dendro),
+               aes(x = x, y = y, xend = xend, yend = yend)) +
+  geom_tile(data = metadata_ordered,
+            aes(x = x, y = -5, fill = Sample),
+            width = 1, height = 4) +
+  geom_point(data = tips,
+             aes(x = x, y = 0, color = cluster),
+             size = 2) +
+  scale_y_continuous(
+    name = "Genetic distance",
+    expand = expansion(mult = c(0.1, 0.05))
+  ) +
+  scale_fill_manual(values = custom_colors) +
+  scale_color_viridis_d() +  # no legend title
+  guides(color = "none") +  # hide cluster legend
+  labs(title = NULL) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.title.x = element_blank(),
+    panel.grid = element_blank()
+  )
+
+haploplot
+
+ggsave(plot = haploplot, "../plots/ehtbf_coluzzii/thesis/cyp6_clusters.png", units = "cm", width = 16, height = 5.5)
+
+##was this right
+
+library(cluster)
+library(factoextra)
+
+# Elbow method
+fviz_nbclust(as.matrix(d), FUNcluster = pam, method = "wss") +
+  labs(title = "Elbow Method to Determine Optimal Clusters")
+
+
+## anything survivory?
+
+cluster_table <- table(metadata_ordered$cluster, metadata_ordered$status)
+print(cluster_table)
+
+# Run Chi-squared test
+chisq.test(cluster_table)
+
+# If expected counts are small, use Fisher's exact test
+fisher.test(cluster_table)
+```
+

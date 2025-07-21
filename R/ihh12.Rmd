@@ -1,0 +1,478 @@
+---
+title: "iHH12"
+author: "Stella Bähr"
+date: "2025-05-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Libraries etc.
+
+```{r}
+library(ggplot2) 
+library(dplyr)
+library(stringr)
+library(forcats)
+options(bitmapType='cairo')
+```
+
+##Get files
+
+```{r}
+#File path and population of interest
+files <- list.files('all/',pattern='*.ihh12.out')
+
+#Create dfs for each and combine
+names = gsub("(?:[^.]+\\.){0}([^.]+).*", "\\1", files)
+ihh12_all <- c()
+for(i in 1:length(files)){
+  filepath <- file.path("all/",files[i])
+  foi <- read.delim(filepath,
+                   colClasses=c("character","numeric","numeric","numeric"),
+                   sep = "\t",head=T)
+  foi$pop <- rep(names[i],nrow(foi))
+  ihh12_all <- rbind(ihh12_all,foi)
+}
+rm(foi)
+
+# FORMAT THE FILE
+# rename chromosomes and save as factor
+# set column names
+# z-score and bin by frequencies
+# filter by allele frequency 0.5
+
+ihh12_all <- ihh12_all %>%
+  mutate(
+    pop = case_when(
+      str_detect(pop, "samples_2L") ~ "2L",
+      str_detect(pop, "samples_2R") ~ "2R",
+      str_detect(pop, "samples_3L") ~ "3L",
+      str_detect(pop, "samples_3R") ~ "3R",
+      str_detect(pop, "samples_X")  ~ "X",
+      TRUE ~ pop
+    ),
+    pop = factor(pop),
+    pos = pos / 1e6  # Convert position to Mb
+  ) %>%
+  mutate(freq_bin = cut(p1, breaks = seq(0, 100, by = 0.1))) %>%
+  group_by(freq_bin) %>%
+  mutate(z_score = scale(ihh12)[, 1]) %>%
+  ungroup() %>%
+  filter(p1 >= 0.5)
+
+```
+
+#Plot Individual
+```{r}
+
+ihh12_quant_bounds <- quantile(ihh12_all$z_score, probs = c(0.01, 0.99), na.rm = TRUE)
+ihh12_all_outliers <- ihh12_all %>%
+  filter(z_score > abs(ihh12_quant_bounds[2]))
+
+write.table(ihh12_all_outliers, file = "ihh12_all_outliers.txt", sep = "\t", row.names = FALSE, quote = FALSE)
+
+
+ihh12_all_outliers <- read.table("ihh12_all_outliers.txt", sep = "\t", header = T)
+
+
+plot_ihh12_all_ind <- ggplot(ihh12_all_outliers) +
+  geom_point(aes(x=pos,y=z_score),
+             col='black',
+             size=0.5,
+             show.legend = FALSE) +
+  facet_grid(~pop, 
+             scales="free_x", 
+             space = "free_x") +
+  labs(x="Position (Mb)" , y='Standardised iHH12') +
+  theme_classic()+
+  theme(
+    strip.text = element_blank()
+  )+
+  scale_x_continuous(
+    breaks = seq(0, 1000, by = 20)
+  )
+
+plot_ihh12_all_ind
+
+ggsave("../../plots/ehtbf_coluzzii/thesis/ihh12_all_ind.pdf", plot = plot_ihh12_all_ind, height = 5, width = 16, units = "cm")
+
+```
+
+
+#Plot Windowed
+
+```{r}
+# Add row number per population to create windows
+ihh12_all_win <- ihh12_all %>%
+  group_by(pop) %>%
+  mutate(row_id = row_number(),
+         window_id = floor((row_id - 1) / 500) + 1) %>%
+  ungroup()
+
+# Compute mean z_score per window and midpoint for plotting
+ihh12_all_windowed <- ihh12_all_win %>%
+  group_by(pop, window_id) %>%
+  summarise(
+    mean_z = mean(z_score, na.rm = TRUE),
+    window_start = min(pos),
+    window_end = max(pos),
+    mid_pos = (min(pos) + max(pos)) / 2,
+    .groups = "drop"
+  )
+rm(ihh12_all_win)
+
+plot_ihh12_all_windowed <- ggplot(ihh12_all_windowed) +
+  geom_line(aes(x = mid_pos, y = mean_z), color = "#b2182b", linewidth = 0.4) +
+  facet_grid(~pop, scales = "free_x", space = "free_x") +
+  labs(x = "", y = "iHH12") +
+  theme_classic() +
+  scale_x_continuous(
+    breaks = seq(0, 1000, by = 20)
+  ) +
+  theme(
+    strip.text = element_blank(),
+    axis.ticks.y = element_blank(),     
+    axis.text.y = element_blank(),
+    axis.title.x=element_blank()
+  )
+
+plot_ihh12_all_windowed
+
+ggsave("../plots/ehtbf_coluzzii/hh/ihh12_all.pdf", plot = plot_ihh12_all_windowed, width = 6, height = 1.5)
+
+```
+
+##Zoom In
+
+```{r}
+
+
+########## Gene of Interest para #############
+
+gene_position <- ((2358158 + 2431617)/2)/1e6
+ihh12_all_para <- ihh12_all %>% filter(pop == "2L", between(pos, gene_position - 2, gene_position + 2)) %>%
+  mutate(dist_from_gene = pos - gene_position)
+
+plot_ihh12_all_para <- ggplot(ihh12_all_para,aes(x=dist_from_gene,y=z_score)) +
+  geom_smooth(method='loess',span=0.15,color="#4393c3")+
+  geom_vline(xintercept = 0,linetype='dashed',color='black') +
+  xlab('para +/- 2MBp') +
+  ylab('Standardised iHH12')+
+  theme_classic()
+
+
+plot_ihh12_all_para
+
+ggsave("../../plots/ehtbf_coluzzii/hh/ihh12_all_para.pdf", plot = plot_ihh12_all_para, height = 3, width = 3.5)
+
+########## Gene of Interest CLIPC9  #############
+
+gene_position <- ((2714472+2719933)/2)/1e6
+ihh12_all_clipc9 <- ihh12_all %>% filter(pop == "2L", between(pos, gene_position - 2, gene_position + 2)) %>%
+  mutate(dist_from_gene = pos - gene_position)
+
+plot_ihh12_all_clipc9 <- ggplot(ihh12_all_clipc9,aes(x=dist_from_gene,y=z_score,color=shape)) +
+  geom_smooth(method='loess',span=0.15,color="#4393c3") +
+  geom_vline(xintercept = 0,linetype='dashed',color='black') +
+  xlab('CLIPC9 +/- 2MBp') +
+  ylab('Standardised iHH12')+
+  theme_classic()
+
+plot_ihh12_all_clipc9
+
+
+ggsave("../../plots/ehtbf_coluzzii/hh/ihh12_all_clip9c.pdf", plot = plot_ihh12_all_clipc9, height = 3, width = 3.5)
+
+########## Gene of Interest COEBE2O  #############
+
+gene_position <- ((54602+60297)/2)/1e6
+ihh12_all_coebe2o <- ihh12_all %>% filter(pop == "2R", between(pos, gene_position - 2, gene_position + 2)) %>%
+  mutate(dist_from_gene = pos - gene_position)
+
+plot_ihh12_all_coebe2o <- ggplot(ihh12_all_coebe2o,aes(x=dist_from_gene,y=z_score,color=shape)) +
+  geom_smooth(method='loess',span=0.15,color="#4393c3") +
+  geom_vline(xintercept = 0,linetype='dashed',color='black') +
+  xlab('COEBE2O + 2MBp') +
+  ylab('Standardised iHH12')+
+  theme_classic()
+
+plot_ihh12_all_coebe2o
+
+
+ggsave("../../plots/ehtbf_coluzzii/hh/ihh12_all_coebe2o.pdf", plot = plot_ihh12_all_coebe2o, height = 3, width = 3.5)
+
+########## Gene of Interest CYP6  #############
+
+gene_position <- ((28491415 + 28493141)/2)/1e6
+ihh12_all_cyp6 <- ihh12_all %>% filter(pop == "2R", between(pos, gene_position - 2, gene_position + 2)) %>%
+  mutate(dist_from_gene = pos - gene_position)
+
+plot_ihh12_all_cyp6 <- ggplot(ihh12_all_cyp6,aes(x=dist_from_gene,y=z_score,color=shape)) +
+  geom_smooth(method='loess',span=0.15,color="#4393c3") +
+  geom_vline(xintercept = 0,linetype='dashed',color='black') +
+  xlab('CYP6 +/- 2MBp') +
+  ylab('Standardised iHH12')+
+  theme_classic()
+
+plot_ihh12_cyp6_ig2
+
+ggsave("../plots/ehtbf_coluzzii/hh/ihh12_all_cyp6.pdf", plot = plot_ihh12_cyp6_ig2, height = 3, width = 3.5)
+
+
+########## Gene of Interest AQP2  #############
+
+gene_position <- ((837955+843075)/2)/1e6
+ihh12_all_aqp2 <- ihh12_all %>% filter(pop == "3L", between(pos, gene_position - 1, gene_position + 1)) %>%
+  mutate(dist_from_gene = pos - gene_position)
+
+plot_ihh12_all_aqp2 <- ggplot(ihh12_all_aqp2,aes(x=dist_from_gene,y=z_score,color=shape)) +
+  geom_smooth(method='loess',span=0.15,color="#4393c3") +
+  geom_vline(xintercept = 0,linetype='dashed',color='black') +
+  xlab('AQP2 +/- 1MBp') +
+  ylab('Standardised iHH12')+
+  theme_classic()
+
+plot_ihh12_all_aqp2
+
+
+ggsave("../../plots/ehtbf_coluzzii/hh/ihh12_all_aqp2.pdf", plot = plot_ihh12_all_aqp2, height = 3, width = 3.5)
+
+########## Gene of Interest GSTEs  #############
+
+gene_position <- ((28594993 + 28601354)/2)/1e6
+ihh12_all_gste <- ihh12_all %>% filter(pop == "3R", between(pos, gene_position - 2, gene_position + 2)) %>%
+  mutate(dist_from_gene = pos - gene_position)
+
+plot_ihh12_all_gste <- ggplot(ihh12_all_gste,aes(x=dist_from_gene,y=z_score,color=shape)) +
+  geom_smooth(method='loess',span=0.15,color="#4393c3") +
+  geom_vline(xintercept = 0,linetype='dashed',color='black') +
+  xlab('GSTE cluster +/- 2MBp') +
+  ylab('Standardised iHH12')+
+  theme_classic()
+
+plot_ihh12_all_gste
+
+ggsave("../../plots/ehtbf_coluzzii/hh/ihh12_all_gste.pdf", plot = plot_ihh12_all_gste, height = 3, width = 3.5)
+
+########## Gene of Interest CYP303A1  #############
+
+gene_position <- ((48648861+48656113)/2)/1e6
+ihh12_all_cyp303a1 <- ihh12_all %>% filter(pop == "3R", between(pos, gene_position - 2, gene_position + 2)) %>%
+  mutate(dist_from_gene = pos - gene_position)
+
+plot_ihh12_all_cyp303a1 <- ggplot(ihh12_all_cyp303a1,aes(x=dist_from_gene,y=z_score,color=shape)) +
+  geom_smooth(method='loess',span=0.15,color="#4393c3") +
+  geom_vline(xintercept = 0,linetype='dashed',color='black') +
+  xlab('CYP303A1 +/- 2MBp') +
+  ylab('Standardised iHH12')+
+  theme_classic()
+
+plot_ihh12_all_cyp303a1
+
+ggsave("../../plots/ehtbf_coluzzii/hh/ihh12_all_cyp303a1.pdf", plot = plot_ihh12_all_cyp303a1, height = 3, width = 3.5)
+
+
+########## Gene of Interest CYP9K1 #############
+
+gene_position <- mean(c(15240572, 15242864)) / 1e6
+ihh12_all_cyp9k <- ihh12_all %>% filter(pop == "X", between(pos, gene_position - 2, gene_position + 2)) %>%
+  mutate(dist_from_gene = pos - gene_position)
+
+plot_ihh12_all_cyp9k1 <- ggplot(ihh12_all_cyp9k,aes(x=dist_from_gene,y=z_score,color=shape)) +
+  geom_smooth(method='loess',span=0.15,color="#4393c3") +
+  geom_vline(xintercept = 0,linetype='dashed',color='black') +
+  xlab('CYP9K1 +/- 2MBp') +
+  ylab('Standardised iHH12')+
+  theme_classic()
+
+plot_ihh12_all_cyp9k1
+
+ggsave("../../plots/ehtbf_coluzzii/hh/ihh12_all_cyp9k1.pdf", plot = plot_ihh12_all_cyp9k1, height = 3, width = 3.5)
+
+
+########## Gene of Interest CYP4G16  #############
+
+gene_position <- ((22937392+22947129)/2)/1e6
+ihh12_all_cyp4g16 <- ihh12_all %>% filter(pop == "X", between(pos, gene_position - 2, gene_position + 2)) %>%
+  mutate(dist_from_gene = pos - gene_position)
+
+plot_ihh12_all_cyp4g16 <- ggplot(ihh12_all_cyp4g16,aes(x=dist_from_gene,y=z_score,color=shape)) +
+  geom_smooth(method='loess',span=0.15,color="#4393c3") +
+  geom_vline(xintercept = 0,linetype='dashed',color='black') +
+  xlab('CYP4G16 +/- 2MBp') +
+  ylab('Standardised iHH12')+
+  theme_classic()
+
+plot_ihh12_all_cyp4g16
+
+ggsave("../../plots/ehtbf_coluzzii/hh/ihh12_all_cyp4g16.pdf", plot = plot_ihh12_all_cyp4g16, height = 3, width = 3.5)
+
+########## Gene of Interest Keap1  #############
+
+gene_position <- ((40926195+40945169)/2)/1e6
+ihh12_all_keap1 <- ihh12_all %>% filter(pop == "2R", between(pos, gene_position - 2, gene_position + 2)) %>%
+  mutate(dist_from_gene = pos - gene_position)
+
+plot_ihh12_all_keap1 <- ggplot(ihh12_all_keap1,aes(x=dist_from_gene,y=z_score,color=shape)) +
+  geom_smooth(method='loess',span=0.15,color="#4393c3") +
+  geom_vline(xintercept = 0,linetype='dashed',color='black') +
+  xlab('KEAP1 +/- 2MBp') +
+  ylab('Standardised iHH12')+
+  theme_classic()
+
+plot_ihh12_all_keap1
+
+ggsave("../../plots/ehtbf_coluzzii/hh/ihh12_all_keap1.pdf", plot = plot_ihh12_all_keap1, height = 3, width = 3.5)
+
+```
+
+##Thesis Figure: Vgsc
+
+```{r}
+########## Region of Interest: Around VGSC  #############
+
+#Vgsc 2358157	2431617
+#CLIPC9 2714472..2719933
+#AGAP004742 2998916..3008084
+
+ihh12_vgsc_region <- ihh12_all %>% filter(pop == "2L" & pos > 1.5 & pos < 4.5)
+
+plot_vgsc_region <- ggplot(ihh12_vgsc_region, aes(x = pos, y = z_score, color = shape)) +
+  geom_smooth(method = 'loess', span = 0.15, color = "#000") +
+  geom_vline(xintercept = 2.358157, linetype = 'dashed', color = 'red') +
+  geom_vline(xintercept = 2.714472, linetype = 'dashed', color = '#214e67') +
+  geom_vline(xintercept = 2.998916, linetype = 'dashed', color = '#214e67') +
+  annotate("text", 
+           x = 2.358157, 
+           y = 0.1, 
+           label = "Vgsc", 
+           color = "red", 
+           angle = 90, 
+           vjust = -0.5, 
+           size = 2) +
+  annotate("text",
+           x = 2.714472, 
+           y = 0.3, 
+           label = "Clipc9", 
+           color = "#214e67", 
+           angle = 90, 
+           vjust = -0.5,
+           size = 2) +
+  annotate("text",
+           x = 2.998916, 
+           y = 1.2, 
+           label = "AGAP004742", 
+           color = "#214e67", 
+           angle = 90, 
+           vjust = -0.4, 
+           size = 2) +
+  xlab('Chr 2L (Mb)') +
+  ylab('Smoothed iHH12') +
+  theme_classic() +
+  xlim(1.5, 4.5)
+
+
+plot_vgsc_region
+
+ggsave("../../plots/ehtbf_coluzzii/thesis/ihh12_vgsc_region.pdf", plot = plot_vgsc_region, height = 5, width = 6, units = "cm")
+
+```
+
+##Thesis Figure: Cyp9k1
+
+```{r}
+
+########## Region of Interest: Around CYP9K1  #############
+
+#cyp9k1 15240571	15242864
+#AGAP000847 15590959 15692650
+#AGAP000851 15724065 15725189
+#AGAP000987 18933849 18935322
+#AGAP000988 18936440 18938933
+#CYP307A1	20008894	20018400 
+#CYP4G16 22937391	22947129 
+
+
+
+ihh12_cyp9k1_region <- ihh12_all %>% filter(pop == "X" & pos > 15 & pos < 23.2)
+
+plot_cyp9k1_region <- ggplot(ihh12_cyp9k1_region, aes(x = pos, y = z_score, color = shape)) +
+  geom_smooth(method = 'loess', span = 0.15, color = "#000") +
+  geom_vline(xintercept = 15.2, linetype = 'dashed', color = 'red') +
+  geom_vline(xintercept = 15.5, linetype = 'dashed', color = '#214e67') +
+  geom_vline(xintercept = 15.8, linetype = 'dashed', color = '#214e67') +
+  geom_vline(xintercept = 18.9, linetype = 'dashed', color = '#214e67') +
+  geom_vline(xintercept = 20.0, linetype = 'dashed', color = 'red') +
+  geom_vline(xintercept = 22.9, linetype = 'dashed', color = 'red') +
+  annotate("text", 
+           x = 15.2, 
+           y = 1.15, 
+           label = "Cyp9k1", 
+           color = "red", 
+           angle = 90, 
+           vjust = -0.3, 
+           size = 2) +
+  annotate("text",
+           x = 15.5, 
+           y = 2, 
+           label = "AGAP000847", 
+           color = "#214e67", 
+           angle = 90, 
+           vjust = -0.2,
+           size = 2) +
+  annotate("text",
+           x =15.8, 
+           y = 2, 
+           label = "AGAP000851", 
+           color = "#214e67", 
+           angle = 90, 
+           vjust = -0.3, 
+           size = 2) +
+  annotate("text",
+           x =18.9, 
+           y = 5, 
+           label = "AGAP000987", 
+           color = "#214e67", 
+           angle = 90, 
+           vjust = -0.5, 
+           size = 2) +
+  annotate("text",
+           x = 18.9, 
+           y = 5, 
+           label = "AGAP000988", 
+           color = "#214e67", 
+           angle = 90, 
+           vjust = 1.5, 
+           size = 2) +
+  annotate("text",
+           x = 20.0, 
+           y = 1.4, 
+           label = "Cyp307a1", 
+           color = "red", 
+           angle = 90, 
+           vjust = -0.5, 
+           size = 2) +
+  annotate("text",
+           x = 22.9, 
+           y = 1.35, 
+           label = "Cyp4g16", 
+           color = "red", 
+           angle = 90, 
+           vjust = -0.5, 
+           size = 2) +
+  xlab('Chr X (Mb)') +
+  ylab('Smoothed iHH12') +
+  theme_classic() +
+  xlim(15, 23)
+
+
+plot_cyp9k1_region
+
+ggsave("../../plots/ehtbf_coluzzii/thesis/ihh12_cyp9k1_region.pdf", plot = plot_cyp9k1_region, height = 5, width = 10, units = "cm")
+
+```
+
+

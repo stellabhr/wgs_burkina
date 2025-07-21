@@ -1,0 +1,440 @@
+---
+title: "SNP Analysis"
+author: "Stella Bähr"
+date: "2025-01-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Load Libraries
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+options(bitmapType='cairo')
+```
+
+
+## Inversions
+
+```{r}
+inversions = read.delim('inversions/ehtbf_coluzzii/ehtbf_coluzzii_inversions.txt',header=T)
+
+#Get rid of different genotype conventions, filter only 2L
+
+inversion2La <- inversions %>%
+  mutate(across(6:125, ~ gsub("/", "|", .)))%>%
+  mutate(across(6:125, ~ replace(., . == "1|1", 1))) %>%
+  mutate(across(6:125, ~ replace(., . == "0|1", 0.5))) %>%
+  mutate(across(6:125, ~ replace(., . == "1|0", 0.5))) %>%
+  mutate(across(6:125, ~ replace(., . == "0|0", 0))) %>%
+  mutate(across(6:125, ~ replace(., . == "2|2", 1))) %>%
+  mutate(across(6:125, ~ replace(., . == "0|2", 0.5))) %>%
+  mutate(across(6:125, ~ replace(., . == "1|2", 0.5)))%>%
+  mutate(across(6:125, ~ replace(., . == "2|1", 0.5)))%>%
+  mutate(across(6:125, ~ replace(., . == "2|0", 1)))%>%
+  mutate(across(6:125, ~ replace(., . == ".|.", 0)))%>%
+  mutate(across(6:125, ~ replace(., . == ".", 0)))%>%
+  filter(CHROM == "AgamP4_2L")
+
+#subset just the genotypes and make sure all of them are numerics
+values2La <- inversion2La [,6:ncol(inversion2La )]
+values2La <-  mutate_all(values2La, function(x) as.numeric(as.character(x)))
+
+#transpose for plotting and set inversion names (just the positions) as column names
+values2La=t(values2La)
+colnames(values2La) <- inversion2La$POS
+
+#get rid of markers that arent present in at least 70% of samples
+values2La <-values2La[, colSums(values2La == 0) < 84]
+
+#sum up genotype total for ordering in plot
+genotype_totals <- rowSums(values2La)
+
+
+#reshape the dataframe to long format
+values2La_long <- values2La %>%
+  as.data.frame() %>%                 # Ensure it's a data frame
+  rownames_to_column(var = "Row") %>% # Add row identifiers
+  pivot_longer(
+    cols = -Row,                      # Pivot all columns except "Row"
+    names_to = "Column",              # New column for column names
+    values_to = "Value"               # New column for values
+  )
+
+values2La_long <- values2La_long %>%
+  left_join(
+    tibble(Row = names(genotype_totals), Genotype_Total = genotype_totals),
+    by = "Row"
+  )
+
+#add metadata for plot order
+values2La_long$Value <- factor(values2La_long$Value, levels = c(0, 0.5, 1))
+values2La_long$Mortality <- ifelse(str_detect(values2La_long$Row, "prior"), "Within 72h",
+                                  ifelse(str_detect(values2La_long$Row, "after"), "After 72h", NA))
+values2La_long$Village <- ifelse(str_detect(values2La_long$Row, "Tie"), "Tiefora",
+                                  ifelse(str_detect(values2La_long$Row, "Ten"), "Tengrela", NA))
+values2La_long$Bednet <- ifelse(str_detect(values2La_long$Row, "IG2"), "IG2",
+                                  ifelse(str_detect(values2La_long$Row, "PND"), "PND", NA))
+
+
+#arrange for plot order
+values2La_long <- values2La_long %>%
+  arrange(Village, Bednet, Mortality, Genotype_Total, Row) %>%
+  mutate(Village_Mort_Bed_Label = paste(Village, Bednet, Mortality, sep = " - ")) %>%
+  mutate(Row = factor(Row, levels = unique(Row)))
+
+plot_inv2La <- ggplot(values2La_long, aes(x = Column, y = Row, fill = Value)) +
+  geom_tile(color = "white", linewidth = 0.1)+
+  theme_minimal()+
+  theme(
+    axis.text.x = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.ticks.y = element_blank(),
+    panel.grid = element_blank(),
+    strip.text.y.left = element_text(angle = 360, hjust = 0, size = 5),
+    strip.placement = "outside",
+    plot.margin = margin(10, 10, 10, 20)
+  )+
+  labs(
+    title = "Inversion 2La",
+    x = element_blank(),
+    y = element_blank()
+  )+
+  scale_fill_manual(
+    values = c("0" = "#fef0d9", "0.5" = "#fc8d59", "1" = "#b30000"), 
+    name = "Genotype",
+    labels = c("WT", "Het", "Der")
+  )+
+  facet_grid(Village_Mort_Bed_Label~., scales="free_y", space = "free_y",switch = "y")
+
+plot_inv2La
+
+#ggsave("../plots/ehtbf_coluzzii/other/inv2La_ehtbf_col_good.pdf", width = 8, height = 5)
+
+writeLines(paste0("AgamP4_2L:", colnames(values2La)), "../ld/2La_snps.txt")
+
+```
+
+###Association Testing
+
+```{r}
+
+# Start by classifying each sample based on majority genotype
+sample_genotype <- apply(values2La, 1, function(row) {
+  counts <- table(factor(row, levels = c(0, 0.5, 1)))
+  majority_value <- as.numeric(names(counts)[which.max(counts)])
+  if (majority_value == 1) {
+    return("Hom")
+  } else {
+    return("Het/WT")
+  }
+})
+
+# Convert to data frame with sample names
+assoc_2La_input <- data.frame(
+  Sample = rownames(values2La),
+  Genotype = sample_genotype,
+  stringsAsFactors = FALSE
+)
+
+# Now extract metadata from Sample names
+assoc_2La_input$Mortality <- ifelse(grepl("prior", assoc_2La_input$Sample), "Within 72h",
+                              ifelse(grepl("after", assoc_2La_input$Sample), "After 72h", NA))
+assoc_2La_input$Village <- ifelse(grepl("Tie", assoc_2La_input$Sample), "Tiefora",
+                            ifelse(grepl("Ten", assoc_2La_input$Sample), "Tengrela", NA))
+assoc_2La_input$Bednet <- ifelse(grepl("IG2", assoc_2La_input$Sample), "IG2",
+                           ifelse(grepl("PND", assoc_2La_input$Sample), "PND", NA))
+
+# Optional: reorder columns for clarity
+assoc_2La_input <- assoc_2La_input[, c("Sample", "Genotype", "Mortality", "Village", "Bednet")]
+
+chisq.test(table(assoc_2La_input$Genotype, assoc_2La_input$Village))
+
+assoc_2La_input_tiefora <- subset(assoc_2La_input, assoc_2La_input$Village=="Tiefora")
+assoc_2La_input_tiefora_pnd <- subset(assoc_2La_input, Village == "Tiefora" & Bednet == "PND")
+assoc_2La_input_tengrela <- subset(assoc_2La_input, assoc_2La_input$Village=="Tengrela")
+assoc_2La_input_tengrela_pnd <- subset(assoc_2La_input, assoc_2La_input$Village=="Tengrela"& Bednet == "PND")
+fisher.test(table(assoc_2La_input_tiefora_pnd$Genotype, assoc_2La_input_tiefora_pnd$Mortality))
+chisq.test(table(assoc_2La_input_tiefora$Genotype, assoc_2La_input_tiefora$Mortality))
+
+library(tidyverse)
+library(rstatix)
+library(broom)
+
+run_smart_tests <- function(df) {
+  
+  df <- df %>%
+    mutate(
+      Mortality = factor(Mortality),
+      Genotype = factor(Genotype)
+    )
+
+  # Define groups: all combinations, plus top-level ones
+  all_combos <- df %>%
+    distinct(Village, Bednet)
+
+  extra_combos <- tribble(
+    ~Village,     ~Bednet,
+    "All",        "All",
+    "Tiefora",    "All",
+    "Tengrela",   "All"
+  )
+
+  test_combos <- bind_rows(extra_combos, all_combos)
+
+  # Apply tests
+  results <- map2_dfr(test_combos$Village, test_combos$Bednet, function(vil, bed) {
+    
+    # Subset
+    sub <- df %>%
+      filter(
+        (vil == "All" | Village == vil),
+        (bed == "All" | Bednet == bed)
+      )
+
+    # Skip if insufficient variation
+    if (n_distinct(sub$Mortality) < 2 || n_distinct(sub$Genotype) < 2) {
+      return(tibble(
+        Village = vil,
+        Bednet = bed,
+        test_type = NA,
+        p_value = NA,
+        effect_size = NA,
+        odds_ratio = NA,
+        n = nrow(sub)
+      ))
+    }
+
+    # Decide which test to use
+    if (vil != "All" && bed != "All") {
+      # Specific comparison: use Fisher's test
+      tab <- table(sub$Genotype, sub$Mortality)
+      test <- fisher.test(tab)
+      effect_size <- cramer_v(tab)
+      odds_ratio <- if ("odds ratio" %in% names(test$estimate)) test$estimate[["odds ratio"]] else NA
+      test_type <- "Fisher"
+    } else {
+      # General comparison: use Chi-squared
+      tab <- table(sub$Genotype, sub$Mortality)
+      test <- chisq.test(tab)
+      effect_size <- sqrt(test$statistic / sum(tab))  # Cramér's V approx
+      odds_ratio <- NA
+      test_type <- "Chi-squared"
+    }
+
+    # Return result row
+    tibble(
+      Village = vil,
+      Bednet = bed,
+      test_type = test_type,
+      p_value = test$p.value,
+      effect_size = effect_size,
+      odds_ratio = odds_ratio,
+      n = nrow(sub)
+    )
+  })
+
+  # Add group label
+  results <- results %>%
+    mutate(Group = ifelse(Bednet == "All", Village, paste(Village, Bednet, sep = " - ")))
+
+  return(results)
+}
+
+# Run on your data
+assoc_results_smart <- run_smart_tests(assoc_2La_input)
+
+# View result
+print(assoc_results_smart)
+
+```
+
+#Survival SNPs Plot
+
+```{r}
+survivalsnps <- read.delim("old/survivaltags/ehtbf_coluzzii_survivaltags.txt",header=T)
+keapsnps <- read.delim("old/keap1/keap1.txt", header = T)
+
+#Get rid of different genotype conventions
+
+keapsnps <- keapsnps %>%
+  mutate(across(5:125, ~ gsub("/", "|", .)))
+
+
+library(tidyverse)
+library(patchwork)
+
+# For One SNP, Select corresponding row (change as needed)
+snp_row <- keapsnps[37, ]  # Replace 'your_input_file' with your actual data frame name
+
+# Pivot and transform
+df <- snp_row %>%
+  pivot_longer(cols = -(1:5), names_to = "sample", values_to = "genotype") %>%
+  mutate(
+    Survival = case_when(
+      str_detect(sample, "after") ~ "Alive",
+      str_detect(sample, "prior") ~ "Dead",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(Survival)) %>%
+  filter(str_detect(genotype, "^[0-9]+[|/][0-9]+$")) %>%
+  mutate(
+    allele1 = as.integer(str_extract(genotype, "^[0-9]+")),
+    allele2 = as.integer(str_extract(genotype, "[0-9]+$")),
+    genotype_class = case_when(
+      allele1 == 0 & allele2 == 0 ~ "WT",
+      allele1 == allele2 & allele1 != 0 ~ "HomAlt",
+      allele1 != allele2 & (allele1 == 0 | allele2 == 0) ~ "Het",
+      allele1 != allele2 & (allele1 != 0 & allele2 != 0) ~ "HetAlt",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(genotype_class))
+
+# Stop if empty
+if (nrow(df) == 0) stop("No valid genotype data to plot")
+
+# Recode genotype_class: collapse "HomAlt", "Het", and "HetAlt" into "Alt"
+df_collapsed <- df %>%
+  mutate(genotype_class = case_when(
+    genotype_class == "WT" ~ "WT",
+    genotype_class %in% c("Het", "HetAlt", "HomAlt") ~ "Alt",
+    TRUE ~ NA_character_
+  ))
+
+# Summarize
+summary_df <- df_collapsed %>%
+  group_by(genotype_class, Survival) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(genotype_class) %>%
+  mutate(
+    percentage = n / sum(n) * 100,
+    genotype_class = factor(genotype_class, levels = c("WT", "Alt"))
+  )
+
+# Plot
+keap1snpplot <- ggplot(summary_df, aes(x = genotype_class, y = percentage, fill = Survival)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(
+    title = NULL,
+    x = paste0("Keap1 (", snp_row$CHROM[1], ":", snp_row$POS[1], ")"),
+    y = NULL
+  ) +
+  scale_fill_viridis_d(option = "viridis") +
+  scale_y_continuous(breaks = c(0, 20, 40, 60, 80, 100)) +
+  theme_minimal(base_size = 8) +
+  theme(
+    plot.title = element_text(size = 9),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"
+  ) +
+  theme_classic() +
+  annotate("segment", x = 0.5, xend = 2.5, y = 115, yend = 115, color = "black") +
+  annotate("text", x = 1.5, y = 125, label = "p = 0.005", size = 3)+
+  annotate("text", x = 1, y = 107, label = "n = 109", size = 3)+
+  annotate("text", x = 2, y = 107, label = "n = 11", size = 3)
+  
+
+
+keap1snpplot
+# Save
+ggsave("../plots/ehtbf_coluzzii/thesis/keap1_40922640.pdf", width = 6, height = 5, plot = keap1snpplot, units = "cm")
+
+```
+
+##Old VGSC mutations
+
+```{r}
+ehtbf_vgsc = read.delim('vgsc/ehtbf_vgsc.txt',header=T)
+
+#Get rid of different genotype conventions
+
+ehtbf_vgsc <- ehtbf_vgsc %>%
+  mutate(across(6:141, ~ gsub("/", "|", .)))
+
+#Convert the inversions to binary and get rid of anything else
+
+ehtbf_vgsc <- ehtbf_vgsc %>%
+  mutate(across(6:141, ~ replace(., . == "1|1", 1))) %>%
+  mutate(across(6:141, ~ replace(., . == "0|1", 0.5))) %>%
+  mutate(across(6:141, ~ replace(., . == "1|0", 0.5))) %>%
+  mutate(across(6:141, ~ replace(., . == "0|0", 0))) %>%
+  mutate(across(6:141, ~ replace(., . == "2|2", 1))) %>%
+  mutate(across(6:141, ~ replace(., . == "0|2", 0.5))) %>%
+  mutate(across(6:141, ~ replace(., . == "1|2", 0.5)))%>%
+  mutate(across(6:141, ~ replace(., . == "2|1", 0.5)))%>%
+  mutate(across(6:141, ~ replace(., . == "2|0", 1)))
+
+
+ehtbf_vgsc$ID <- c("V402L","L995S","L995F","I1527T","N1570Y","P1874S","P1874L","A1934V","I1940T")
+
+#ehtbf_vgsc$ID <- c("T154S","F120L","L119V","I114T","G26S","N3K")
+
+subset_vgsc <- ehtbf_vgsc[ehtbf_vgsc$ID %in% c("V402L", "L995F", "I1527T"), ]
+
+vgsc <- subset_vgsc
+#subset just the genotypes and make sure all of them are numerics
+valuesvgsc <- vgsc[,6:ncol(vgsc)]
+valuesvgsc <-  mutate_all(valuesvgsc, function(x) as.numeric(as.character(x)))
+valuesvgsc <- na.omit(valuesvgsc)
+
+
+#transpose for plotting and set inversion names (just the positions) as column names
+valuesvgsc=t(valuesvgsc)
+colnames(valuesvgsc) <- vgsc$ID
+
+
+# Reshape the dataframe to long format
+valuesvgsc_long <- valuesvgsc %>%
+  as.data.frame() %>%                 # Ensure it's a data frame
+  rownames_to_column(var = "Row") %>% # Add row identifiers
+  pivot_longer(
+    cols = -Row,                      # Pivot all columns except "Row"
+    names_to = "Column",              # New column for column names
+    values_to = "Value"               # New column for values
+  )
+
+
+valuesvgsc_long$Value <- factor(valuesvgsc_long$Value, levels = c(0, 0.5, 1))
+valuesvgsc_long$Mortality <- ifelse(str_detect(valuesvgsc_long$Row, "prior"), "Within 72",
+                                  ifelse(str_detect(valuesvgsc_long$Row, "after"), "After", NA))
+
+```
+
+##Plot
+
+```{r}
+vgsc_subset_mort <- ggplot(valuesvgsc_long, aes(x = Column, y = Row, fill = Value)) +
+  geom_tile(color = "white", linewidth = 0.1)+
+  theme_minimal()+
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    axis.text.y = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.ticks.y = element_blank(),
+    panel.grid = element_blank()
+  )+
+  labs(
+    title = "Vgsc Mutations",
+    x = element_blank(),
+    y = element_blank()
+  )+
+  scale_fill_manual(
+    values = c("0" = "#332288", "1" = "#E4CB4D", "0.5" = "#332288"), 
+    name = "Genotype",
+    labels = c("WT", "Het", "Der")
+  )+
+  facet_grid(Mortality~., scales="free_y",switch = "y")
+
+vgsc_subset_mort
+
+ggsave("../plots/vgsc_subset_nohets.pdf", plot = vgsc_subset_nohets, width = 3.5, height = 5)
+```
+

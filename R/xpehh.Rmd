@@ -1,0 +1,355 @@
+---
+title: "XPEHH"
+author: "Stella Bähr"
+date: "2025-05-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Libraries
+```{r}
+library(ggplot2) 
+library(dplyr)
+library(stringr)
+library(forcats)
+options(bitmapType='cairo')
+```
+
+#Function
+```{r}
+# Function to scale and get log P value
+calculate_xpehh_pvalues <- function(data, xpehh_col = "xpehh", adjust_method = "fdr") {
+  data %>%
+    mutate(
+      z_score = scale(.data[[xpehh_col]], center = TRUE, scale = TRUE)[,1],  
+      p_value = 2 * pnorm(-abs(z_score)),  # two sided p-value
+      adjusted_p = p.adjust(p_value, method = adjust_method),  # Multiple testing 
+      log_pval = -log10(adjusted_p)  # Transform to -log10(p)
+    ) %>%
+    mutate(
+      log_pval = ifelse(is.infinite(log_pval), max(log_pval[is.finite(log_pval)], na.rm = TRUE) + 1, log_pval)  # Handle Inf
+    )
+}
+```
+
+#Load File
+```{r}
+
+##File path and population of interest
+
+files <- list.files("mortality_tiefora/",pattern='*.xpehh.out')
+
+###Create dataframe
+
+names = gsub("(?:[^.]+\\.){0}([^.]+).*", "\\1", files)
+xpehh <- c()
+
+for(i in 1:length(files)){
+  filepath <- file.path("/g/huber/users/baehr/selscan/xpehh/mortality_tiefora/",files[i])
+  foi <- read.delim(filepath,
+                   colClasses=c("character","numeric","numeric","numeric","numeric","numeric", "numeric","numeric"),
+                   sep = "\t",head=T)
+  foi$pop <- rep(names[i],nrow(foi))
+  xpehh <- rbind(xpehh,foi)
+}
+rm(foi)
+
+#Clean Up
+xpehh$pop <- gsub('^output_ehtbfcoluzzii_vickytengrela_', '', xpehh$pop)
+xpehh$pop <- as.factor(xpehh$pop)
+xpehh$pos <- xpehh$pos/1e6
+
+
+# Filter for variants with allele frequency ≥ 0.5
+
+xpehh_filtered <- xpehh %>%
+  filter(p1 >= 0.5)
+
+#Get final XPEHH and check how many "outliers"
+
+xpehh_mortality_tiefora <- calculate_xpehh_pvalues(xpehh_filtered, adjust_method = "fdr")
+
+write.csv(xpehh_mortality_tiefora, "mortality_tiefora/xpehh_mortality_tiefora.csv", row.names = FALSE)
+rm(xpehh)
+rm(xpehh_filtered)
+
+```
+
+#Plot Singular
+
+```{r}
+
+xpehh_mortality_tiefora <- read.table("mortality_tiefora/", sep = ",", header = T)
+
+# Subset where xpehh is positive (A pop has extended homozygosity)
+xpehh_mortality_tiefora_positive <- xpehh_mortality_tiefora[xpehh_mortality_tiefora$xpehh > 0, ]
+
+# Subset where xpehh is negative (B (ref) pop has extended homozygosity)
+xpehh_mortality_tiefora_negative <- xpehh_mortality_tiefora[xpehh_mortality_tiefora$xpehh < 0, ]
+
+
+#which one do we care about?
+xpehh_mortality_tiefora_input_plot <- xpehh_mortality_tiefora_positive %>%
+  filter(log_pval >= 0.01)
+
+
+#Plot
+
+label_df <- data.frame(
+  pos = 40.9,
+  log_pval = 4.5,
+  pop = "2R",        # must match the facet label exactly (check your data!)
+  label = "Keap1"
+)
+
+plot_xpehh_mortality_tiefora <- ggplot() +
+  geom_point(data = xpehh_mortality_tiefora_input_plot,
+             aes(x = pos,
+                 y = log_pval,
+                 color = as.factor(pop)),
+             size = 0.5) +
+  geom_text(data = label_df,
+            aes(x = pos, y = log_pval, label = label),
+            color = "red", size = 3, vjust = -0.5) + 
+  labs(x = "", y = "-log10 (p-value)") +
+  facet_grid(~pop, scales = 'free_x', space = 'free_x') +
+  theme_classic() +
+  theme(
+    panel.spacing = unit(0.5, "lines"),
+    legend.position = "none"
+  ) +
+  scale_color_manual(
+    values =  c(rep(c("black", "grey"),
+              length.out = length(unique(xpehh_mortality_tiefora_input_plot$pop))))) +
+  scale_y_continuous(breaks = c(1,4,7), limits = c(0,7))+
+  scale_x_continuous(
+    breaks = seq(0, 1000, by = 20),
+    name = "Position (Mb)")
+ 
+
+plot_xpehh_mortality_tiefora
+
+
+ggsave("../../plots/ehtbf_coluzzii/thesis/xpehh_keap1.pdf",plot = plot_xpehh_mortality_tiefora,width = 10, height = 5, units = "cm")
+
+rm(xpehh_mortality_input_plot)
+```
+
+
+#Select Top XPEHH 
+```{r}
+# files <- list.files('xpehh/mortality/',pattern='*.xpehh.out')
+# 
+# 
+# names = gsub("(?:[^.]+\\.){0}([^.]+).*", "\\1", files)
+# xpehh <- c()
+# 
+# for(i in 1:length(files)){
+#   filepath <- file.path("xpehh/mortality",files[i])
+#   foi <- read.delim(filepath,
+#                    colClasses=c("character","numeric","numeric","numeric","numeric","numeric", "numeric","numeric"),
+#                    sep = "\t",head=T)
+#   foi$pop <- rep(names[i],nrow(foi))
+#   xpehh <- rbind(xpehh,foi)
+# }
+# rm(foi)
+# 
+# #Clean Up
+# 
+# xpehh$pop <- gsub('^output_tengrela_tengrela_mortality_', '', xpehh$pop)
+# xpehh$pop <- as.factor(xpehh$pop)
+# 
+# # Filter for variants with allele frequency ≥ 0.5
+# 
+# xpehh_filtered <- xpehh %>%
+#   filter(p1 >= 0.5)
+# 
+# #Get final XPEHH and check how many "outliers"
+# 
+# xpehh_mortality <- calculate_xpehh_pvalues(xpehh_filtered, adjust_method = "fdr")
+
+
+xpehh_mortality_alives <- xpehh_mortality_positive %>%
+  mutate(region = ifelse(pop == "2L" & pos >= 20.528221 & pos <= 42.072537, "2La", "non-2La"))
+
+thresholds <- xpehh_mortality_alives %>%
+  group_by(region) %>%
+  reframe(threshold_999 = quantile(log_pval, probs = 0.999, na.rm = TRUE))
+
+# Calculate relative difference between thresholds
+threshold_diff <- abs(thresholds$threshold_999[thresholds$region == "2La"] - 
+                      thresholds$threshold_999[thresholds$region == "non-2La"]) /
+                  thresholds$threshold_999[thresholds$region == "non-2La"]
+
+
+if (threshold_diff > 0.1) {
+  # Thresholds differ by more than 10% → use region-specific thresholds
+  xpehh_mortality_top_999 <- xpehh_mortality_alives %>%
+    left_join(thresholds, by = "region") %>%
+    filter(log_pval > threshold_999)
+} else {
+  # Thresholds are similar → use the non-2La threshold for all
+  common_threshold <- thresholds$threshold_999[thresholds$region == "non-2La"]
+  
+  xpehh_mortality_top_999 <- xpehh_mortality_alives %>%
+    filter(log_pval > common_threshold)
+}
+
+xpehh_mortality_top_999 <- xpehh_mortality_top_999 %>%
+  mutate(POS = pos*1e6) %>%
+  select(CHROM = pop, POS , xpehh, log_pval)
+         
+write.table(xpehh_mortality_top_999, "ehtbf_coluzzii_xpehh_mortality_alive_top_snps.tsv", sep = "\t", row.names = FALSE)
+
+rm(xpehh_mortality_negative)
+rm(xpehh_mortality_positive)
+
+```
+
+#Plot Panel Thesis
+Starting with several XPEHH files
+```{r}
+#Select correct comparison and add label
+xpehh_mortality_all <- read.table("mortality/xpehh_mortality.csv", sep = ",", header = T)
+
+xpehh_mortality_tengrela <- read.table("mortality_tengrela/xpehh_mortality_tengrela.csv", sep = ",", header = T)
+
+xpehh_mortality_tiefora <- read.table("mortality_tiefora/xpehh_mortality_tiefora.csv", sep = ",", header = T)
+
+#Select 
+
+xpehh_mortality_all_alives <- xpehh_mortality_all[xpehh_mortality_all$xpehh > 0, ]
+xpehh_mortality_tengrela_alives <- xpehh_mortality_tengrela[xpehh_mortality_tengrela$xpehh > 0, ]
+xpehh_mortality_tiefora_alives <- xpehh_mortality_tiefora[xpehh_mortality_tiefora$xpehh < 0, ]
+
+
+#add group variable for facet wrap to work later
+xpehh_mortality_all_alives$group   <- "A:D (All)"  
+xpehh_mortality_tiefora_alives$group    <- "A:D (Tiefora)"
+xpehh_mortality_tengrela_alives$group   <- "A:D (Tengrela)"
+
+
+#combine
+xpehh_combined <- bind_rows(xpehh_mortality_all_alives, xpehh_mortality_tiefora_alives, xpehh_mortality_tengrela_alives)
+
+xpehh_combined_input_plot <- xpehh_combined %>%
+  filter(log_pval >= 0.01)
+
+# Plot
+plot_xpehh_combined <- ggplot(xpehh_combined_input_plot, aes(x = pos, y = log_pval)) +
+  geom_point(alpha = 0.5, size = 0.1) +
+  facet_grid(group ~ pop, 
+             scales = "free_x", 
+             space = "free_x", 
+             switch = "y") +
+  scale_y_continuous(limits = c(0.01, 8)) +
+  scale_x_continuous(
+    name = "Position (Mb)",
+    breaks = seq(0, 1000, by = 20)
+  ) +
+  labs(y = "-log10 (p-value)") +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 8),
+    axis.ticks.x = element_line(),
+    # Restore and style the facet label boxes
+    strip.placement = "outside",
+    strip.background = element_rect(color = "black", fill = "white", linewidth = 1),
+    strip.text = element_text(color = "black"),
+  )
+
+plot_xpehh_combined
+
+ggsave("../../plots/ehtbf_coluzzii/hh/xpehh_mortality_combined_v2.pdf", plot = plot_xpehh_combined, height = 5, width = 6)
+
+```
+
+##Plot Final panel thesis
+```{r}
+#Select correct comparison and add label
+xpehh_mortality_all <- read.table("mortality/xpehh_mortality.csv", 
+                                  sep = ",", 
+                                  header = T)
+
+xpehh_mortality_tengrela <- read.table("mortality_tengrela/xpehh_mortality_tengrela.csv", 
+                                       sep = ",", 
+                                       header = T)
+
+xpehh_mortality_tiefora <- read.table("mortality_tiefora/xpehh_mortality_tiefora.csv", 
+                                      sep = ",", 
+                                      header = T)
+
+# Signed log10(p-value) based on XPEHH direction
+xpehh_mortality_all <- xpehh_mortality_all %>%
+  mutate(log_pval_signed = ifelse(xpehh > 0, log_pval, -log_pval))%>%
+  mutate(group = "A:D (All)")
+
+
+xpehh_mortality_tengrela <- xpehh_mortality_tengrela %>%
+  mutate(log_pval_signed = ifelse(xpehh > 0, log_pval, -log_pval))%>%
+  mutate(group = "A:D (Tengrela)")
+
+xpehh_mortality_tiefora <- xpehh_mortality_tiefora%>%
+  mutate(log_pval_signed = ifelse(xpehh < 0, log_pval, -log_pval))%>%
+  mutate(group = "A:D (Tiefora)")
+
+##combine
+xpehh_combined <- bind_rows(xpehh_mortality_all, xpehh_mortality_tiefora, xpehh_mortality_tengrela)
+
+xpehh_combined_input_plot <- xpehh_combined %>%
+  filter(abs(log_pval_signed) >= 0.01)
+
+xpehh_mortality_plot_export <- xpehh_combined_input_plot %>%
+  mutate(POS = pos*1e6) %>%
+  select(CHROM = pop, POS , xpehh, log_pval_signed, group)
+         
+write.table(xpehh_mortality_plot_export, "figure4_input_values.tsv", sep = "\t", row.names = FALSE)
+
+#Plot
+
+plot_xpehh_combined <- ggplot(xpehh_combined_input_plot,
+                              aes(x = pos, y = log_pval_signed, color = log_pval_signed)) +
+  geom_point(alpha = 0.6, size = 0.2) +
+  geom_hline(yintercept = 0, color = "black", linetype = "dashed") +
+  facet_grid(group ~ pop,
+             scales = "free_x",
+             space = "free_x",
+             switch = "y") +
+  scale_color_gradient2(
+    low = "blue",
+    mid = "#555555",
+    high = "red",
+    midpoint = 0,
+    limits = c(-3, 3),
+    oob = scales::squish
+  ) +
+  scale_y_continuous(
+    breaks = c(-7, -4, -1, 1, 4, 7),
+    limits = c(-7, 7)
+  ) +
+  scale_x_continuous(
+    name = "Position (Mb)",
+    breaks = seq(0, 1000, by = 20)
+  ) +
+  labs(y = "Signed -log10(p-value)\n(Pos: Alive, Neg: Dead)") +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 8),
+    axis.ticks.x = element_line(),
+    strip.placement = "outside",
+    strip.background = element_rect(color = "black", fill = "white", linewidth = 1),
+    strip.text = element_text(color = "black"),
+    panel.spacing = unit(0.5, "lines"),
+    legend.position = "none"
+  )
+
+# Display the plot
+plot_xpehh_combined
+
+ggsave("../../plots/ehtbf_coluzzii/thesis/xpehh_mortality_combined.png", plot = plot_xpehh_combined, units = "cm", width = 16, height = 13)
+
+```
+

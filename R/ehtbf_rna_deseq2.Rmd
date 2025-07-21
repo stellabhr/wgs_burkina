@@ -1,0 +1,393 @@
+---
+title: "DeSeq2 Timecourse"
+author: "Stella Bähr"
+date: "2024-11-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load Packidge
+
+```{r, echo = FALSE, warning = FALSE, message=FALSE}
+library(DESeq2)
+library(magrittr)
+library(ggplot2)
+library(pheatmap)
+library(RColorBrewer)
+
+#random command thats required to allow plotting on Rstudio Server EMBL
+options(bitmapType='cairo')
+```
+
+##Import Data from featurecounts
+
+```{r}
+
+
+readcounts <- read.table("/g/huber/users/baehr/rnaseq/genecounts/ehtbf_rna_featureCounts.txt", header=TRUE)
+
+# gene IDs should be stored as row.names
+
+row.names(readcounts) <-  readcounts$Geneid
+
+# exclude the columns without read counts (columns 1 to 6 contain additional # info such as genomic coordinates)
+
+readcounts <- readcounts[,-c(1:6)]
+
+
+#clean up names
+t_ids <- sub(".*(T[0-9]{4}).*", "\\1", names(readcounts))
+
+t_id_map <- c(
+  T0001 = "Tief1",
+  T0002 = "Tief2",
+  T0003 = "Tief3",
+  T0004 = "Teng1",
+  T0005 = "Teng2",
+  T0006 = "Teng3",
+  T0007 = "Teng4",
+  T0008 = "Ngou1",
+  T0009 = "Ngou2",
+  T0010 = "Ngou3",
+  T0011 = "Ngou4"
+)
+
+#this step technically unnecessary as the order is the same but helpful for when its not
+mapped_names <- t_id_map[t_ids]
+
+#assign mapped names
+names(readcounts) <- mapped_names
+
+#readcounts <- readcounts[,1:7]
+
+#need sample info to import into DeSeq2
+sample_info <- DataFrame(
+                         "ID" = colnames(readcounts), 
+                         "Group" = c("Tie","Tie","Tie","Ten","Ten","Ten","Ten", "Ngou","Ngou","Ngou","Ngou"),
+                         "Source" = c(rep("Field",7), rep("Lab",4))
+                         )
+
+rownames(sample_info) = names(readcounts)
+sample_info
+
+#Filter step: Only keep genes that have at least 10 counts in at least n-1 samples (here 3)
+gene_counts_filter <- readcounts[rowSums(readcounts>9)>=3,]
+
+
+
+#Create DeSeqDataSet with appropriate design!
+
+dds <- DESeqDataSetFromMatrix(countData = gene_counts_filter, 
+                              colData = sample_info, 
+                              design = ~Source)
+
+dds
+```
+
+##Some Pre-Processing
+This follows the general steps outlined in the [DeSeq2 RNA-Seq tutorial](http://master.bioconductor.org/packages/release/workflows/vignettes/rnaseqGene/inst/doc/rnaseqGene.html#time-course-experiments). 
+
+###Pre-Filtering
+Pre-filtering to keep only rows that have a count of at least 10 for a minimal number of samples.
+
+```{r}
+nrow(dds)
+smallestGroupSize <- 3 #smallest number of samples in each group
+keep <- rowSums(counts(dds) >= 10) >= smallestGroupSize
+dds <- dds[keep,]
+nrow(dds)
+```
+
+###Factor Levels
+By default, R will choose a reference level for factors based on alphabetical order. Then, if you never tell the DESeq2 functions which level you want to compare against (e.g. which level represents the control group), the comparisons will be based on the alphabetical order of the levels. If the original input is of type "character", it might even be entirely random, as factors only get assigned based on characters when creating the DeSeqDataSet from the matrix. Anyway, it is important to check if the factors are in order.
+
+```{r}
+dds$Source
+
+#if factors are not in order, use either of the following
+#dds$incubation <- factor(dds$incubation, levels = c("1hr","4hr","8hr","24hr","72hr")) #manually tell the order
+dds$Source <- relevel(dds$Source, ref="Lab") #provide the reference group
+```
+
+###Collapsing Replicates
+Technical replicates should be analyzed together, biological replicates should be kept separate! So only use if the samples are technical replicates. You need several biological replicates to do statistical testing on! 
+
+```{r}
+
+#Add relevant information to the dds by which to collapse
+#dds$sample <- sub("^([^_]+_[^_]+)_[^_]+$", "\\1", cleaned_names)
+#dds$rep <-  sub("^[^_]+_[^_]+_([^_]+)$", "\\1", cleaned_names)
+
+#check if it worked, should now include data on the sample id and replicate
+#colData(dds)
+
+#now do actual collapsing
+#ddscoll <-  collapseReplicates(dds, dds$sample, dds$rep)
+
+#as.data.frame(colData(ddscoll)) #interestingly this seems to change the row names as well, which is fine (?) 
+```
+
+
+##Variance-stabilizing transformation
+Ideally we want homoskedastic data, but for RNA-seq counts the expected variance grows with the mean. DESeq2 offers two transformations for count data that stabilize the variance across the mean. For medium-large (n>30) datasets, vst is recommended. For smaller datasets the regularized-logarithm transformation or rlog works better.
+
+This is necessary for downstream analysis, as otherwise the higher variance from the high mean counts would confound it. 
+
+```{r}
+rld <- rlog(dds, blind = FALSE)
+head(assay(rld), 3)
+
+#transformed values in rld object are NO LONGER COUNTS! 
+#blind argument clarifies that we expect our variables (treatment, time) will not contribute to the expected variance-mean trend of the experiment
+```
+
+##Sample Distances
+```{r}
+sampleDists <- dist(t(assay(rld)))
+
+sampleDistMatrix <- as.matrix( sampleDists )
+#rownames(sampleDistMatrix) <- paste( rld$Source, rld$Group, sep = " - " )
+colnames(sampleDistMatrix) <- NULL
+colors <- colorRampPalette( rev(brewer.pal(9, "Blues")) )(255)
+pheatmap(sampleDistMatrix,
+         clustering_distance_rows = sampleDists,
+         clustering_distance_cols = sampleDists,
+         col = colors)
+```
+##PCA
+
+```{r}
+pcaData <- plotPCA(rld, intgroup = "Group", returnData = TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+
+pca <- ggplot(pcaData, aes(x = PC1, y = PC2, color = Group)) +
+  geom_point(size = 2) +
+  xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+  ylab(paste0("PC2: ", percentVar[2], "% variance")) +
+  theme_classic()+
+  scale_colour_viridis_d()
+
+pca
+
+ggsave("../plots/ehtbf_coluzzii/thesis/rna_pca.pdf", plot = pca, width = 7, height = 8 , units ="cm")
+```
+##Differential Expression
+
+```{r}
+dds <- DESeq(dds)
+res_field_vs_lab <- results(dds)
+
+
+sig_field <- res_field_vs_lab[which(res_field_vs_lab$padj < 0.05 & abs(res_field_vs_lab$log2FoldChange) > 1), ]
+nrow(sig_field)  # Number of DEGs
+
+gene_desc <- read.delim("../stuff/gene_descriptions.txt", stringsAsFactors = FALSE, header = F)
+colnames(gene_desc) <- c("gene_id", "desc")
+
+field_top_up <- head(sig_field[order(sig_field$log2FoldChange, decreasing = TRUE), ], n = 15) 
+field_top_up.df <- as.data.frame(field_top_up)
+field_top_up.df$gene_id <- rownames(field_top_up.df)
+merged_df_top <- merge(field_top_up.df, gene_desc, by = "gene_id", all.x = TRUE)
+
+
+field_top_down <- head(sig_field[order(sig_field$log2FoldChange), ], n=15)  # Top downregulated
+field_top_down.df <- as.data.frame(field_top_down)
+field_top_down.df$gene_id <- rownames(field_top_down.df)
+merged_df_down <- merge(field_top_down.df, gene_desc, by = "gene_id", all.x = TRUE)
+
+library(EnhancedVolcano)
+
+volcano_field_lab <- EnhancedVolcano(res_field_vs_lab,
+    lab = rownames(res_field_vs_lab),
+    x = 'log2FoldChange',
+    y = 'pvalue',
+    pCutoff = 0.05,
+    FCcutoff = 1,
+    title = NULL,
+    subtitle = NULL,
+    caption = NULL,                     # No caption
+    legendPosition = 'none',            # No legend
+    pointSize = 2.0,
+    labSize = 3.0,
+    colAlpha = 0.9,
+    
+    axisLabSize = 10,
+    titleLabSize = 14,
+    subtitleLabSize = 12
+)
+
+
+volcano_field_lab
+
+ggsave("../plots/ehtbf_coluzzii/thesis/rna_volcano_field_lab.pdf", plot = volcano_field_lab, height = 8, width = 9, units = "cm")
+
+
+
+volcano_df <- as.data.frame(res_field_vs_lab) %>%
+  rownames_to_column("gene_id") %>%
+  mutate(
+    significance = case_when(
+      padj < 0.05 & abs(log2FoldChange) > 1 ~ "Significant",
+      TRUE ~ "Not significant"
+    )
+  )
+
+# Merge with gene_desc (assumed to have gene_id and gene_name or description column)
+annotated_df <- left_join(volcano_df, gene_desc, by = "gene_id")
+
+# Create a label column: gene name if available, else fallback to gene_id (AGAP)
+annotated_df <- annotated_df %>%
+  mutate(label = ifelse(!is.na(desc) & desc != "", desc, gene_id))
+
+library(ggrepel)
+
+top_labels <- annotated_df %>%
+  filter(padj < 0.05 & abs(log2FoldChange) > 2) %>%
+  top_n(20, wt = -padj)  # 20 most significant
+
+ggvolcano <- ggplot(annotated_df, aes(x = log2FoldChange, y = -log10(pvalue))) +
+  geom_point(aes(color = significance), alpha = 0.8, size = 1.5) +
+  geom_vline(xintercept = c(-1, 1), linetype = "dashed") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed") +
+  xlim(c(-10,17))+
+  scale_color_manual(values = c("Significant" = "firebrick", "Not significant" = "gray70")) +
+  geom_text_repel(
+    data = top_labels,
+    aes(label = gene_id),
+    size = 3,
+    max.overlaps = 10,
+    box.padding = 0.3,
+    segment.color = 'grey50'
+  ) +
+  labs(title = NULL,
+       x = "Log2 Fold Change",
+       y = "-log10(p-value)") +
+  theme_classic() +
+  theme(
+    legend.position = "none"
+  )
+
+
+ggvolcano
+
+ggsave(plot = ggvolcano, "../plots/ehtbf_coluzzii/thesis/rna_volcano_field_lab.pdf", width = 10, height = 8, units = "cm")
+
+```
+
+
+###site specific
+Now onwards to site specific stuff
+
+```{r}
+# Add group as a factor with explicit levels
+
+
+colData(dds)$Group <- c(rep("Tief",3), rep("Teng",4), rep("Ngou",4))
+colData(dds)$Group <- factor(colData(dds)$Group, levels = c("Tief", "Teng", "Ngou"))
+dds$Group <- relevel(dds$Group, ref="Ngou")
+design(dds) <- ~ Group
+
+dds <- DESeq(dds)
+
+# Pairwise comparisons
+res_Teng_vs_Ngou <- results(dds, contrast = c("Group", "Teng", "Ngou"))
+res_Tief_vs_Ngou <- results(dds, contrast = c("Group", "Tief", "Ngou"))
+
+# Significant DEGs
+sig_Teng <- res_Teng_vs_Ngou[which(res_Teng_vs_Ngou$padj < 0.05 & abs(res_Teng_vs_Ngou$log2FoldChange) > 1), ]
+sig_Tief <- res_Tief_vs_Ngou[which(res_Tief_vs_Ngou$padj < 0.05 & abs(res_Tief_vs_Ngou$log2FoldChange) > 1), ]
+
+# DEG counts
+library(ggvenn)
+
+# Prepare list of gene sets
+deg_lists <- list(
+  Tengrela = rownames(sig_Teng),
+  Tiefora = rownames(sig_Tief)
+)
+
+viridis_colors <- viridis(10)
+fill_colors <- c(viridis_colors[5], viridis_colors[10])  # yellow and green
+
+# Plot using ggvenn
+rnavenn <- ggvenn(
+  deg_lists,
+  fill_color = fill_colors,
+  stroke_size = 0.5,
+  text_size = 3,
+  
+)
+
+ggsave(plot = rnavenn, "../plots/ehtbf_coluzzii/thesis/rna_venn.pdf", height = 6, width = 8, units = "cm")
+
+##Get unique genes
+
+# Convert to data frames first
+sig_Teng_df <- as.data.frame(sig_Teng)
+sig_Tief_df <- as.data.frame(sig_Tief)
+
+# Add gene IDs as a column
+sig_Teng_df$gene_id <- rownames(sig_Teng_df)
+sig_Tief_df$gene_id <- rownames(sig_Tief_df)
+
+# Unique gene IDs
+unique_Teng_ids <- setdiff(sig_Teng_df$gene_id, sig_Tief_df$gene_id)
+unique_Tief_ids <- setdiff(sig_Tief_df$gene_id, sig_Teng_df$gene_id)
+
+# Subset to get data frames of unique genes
+unique_Teng_df <- sig_Teng_df[sig_Teng_df$gene_id %in% unique_Teng_ids, ]
+unique_Tief_df <- sig_Tief_df[sig_Tief_df$gene_id %in% unique_Tief_ids, ]
+
+annotated_unique_Teng <- merge(unique_Teng_df, gene_desc, by = "gene_id", all.x = TRUE)
+annotated_unique_Tief <- merge(unique_Tief_df, gene_desc, by = "gene_id", all.x = TRUE)
+
+write.table(annotated_unique_Teng, "DEG_unique_Ten.tsv", sep = "\t", row.names = F)
+write.table(annotated_unique_Tief, "DEG_unique_Tie.tsv", sep = "\t", row.names = F)
+
+```
+
+GO terms etc
+
+```{r}
+library(clusterProfiler)
+library(org.Ag.eg.db)  # Replace with correct annotation DB
+
+# Convert gene symbols to Entrez IDs
+genes_Teng <- rownames(sig_Teng)
+genes_Tief <- rownames(sig_Tief)
+
+entrez_Teng <- bitr(genes_Teng, fromType = "ENSEMBL", toType = "ENTREZID", OrgDb = org.Ag.eg.db)
+entrez_Tief <- bitr(genes_Tief, fromType = "ENSEMBL", toType = "ENTREZID", OrgDb = org.Ag.eg.db)
+
+# GO Enrichment
+ego_Teng <- enrichGO(gene = entrez_Teng$ENTREZID, OrgDb = org.Ag.eg.db, ont = "BP", pAdjustMethod = "BH", qvalueCutoff = 0.05, readable = TRUE)
+ego_Tief <- enrichGO(gene = entrez_Tief$ENTREZID, OrgDb = org.Ag.eg.db, ont = "BP", pAdjustMethod = "BH", qvalueCutoff = 0.05, readable = TRUE)
+
+# Visualize
+dotplot_teng <- dotplot(ego_Teng, showCategory = 10, title = "GO Enrichment: Tengrela")
+dotplot_tie <- dotplot(ego_Tief, showCategory = 10, title = "GO Enrichment: Tiefora")
+
+ggsave("../plots/ehtbf_coluzzii/thesis/rna_GO_tengrela.pdf", dotplot_teng, width = 16, height = 12, units = "cm")
+ggsave("../plots/ehtbf_coluzzii/thesis/rna_GO_tiefora.pdf", dotplot_tie, width = 16, height = 12, units = "cm")
+
+
+# Extract GO IDs or Descriptions
+go_teng <- as.data.frame(ego_Teng)
+go_tief <- as.data.frame(ego_Tief)
+
+# Filter for significant terms (optional, but safe)
+go_teng_sig <- go_teng[go_teng$p.adjust < 0.05, ]
+go_tief_sig <- go_tief[go_tief$p.adjust < 0.05, ]
+
+# Overlap by GO ID
+overlap_ids <- intersect(go_teng_sig$ID, go_tief_sig$ID)
+only_teng <- setdiff(go_teng_sig$ID, go_tief_sig$ID)
+only_tief <- setdiff(go_tief_sig$ID, go_teng_sig$ID)
+
+overlap_terms <- intersect(go_teng_sig$Description, go_tief_sig$Description)
+only_tief <- setdiff(go_tief_sig$Description, go_teng_sig$Description)
+```
+

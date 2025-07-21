@@ -1,0 +1,473 @@
+---
+title: "Basic Stats (vcftools)"
+author: "Stella Bähr"
+date: "2025-02-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Libraries etc
+
+```{r}
+library(ggplot2)
+library(dplyr)
+options(bitmapType='cairo')
+```
+
+
+##Nucleotide Diversity
+```{r}
+
+pi_data <- read.table("ehtbf_coluzzii/ehtbf_coluzzii.windowed.pi", header = TRUE)
+
+#1.000.000 bp equals 1 Mbp
+
+pi_data$BIN_START <- pi_data$BIN_START/1e6
+pi_data$BIN_END <- pi_data$BIN_END/1e6
+
+#remove irrelevant MT CHROM
+
+pi_data <- pi_data[pi_data$CHROM != "AgamP4_Mt", ]
+
+#only select every 10th or 20th bin
+pi_data_strip <- pi_data[seq(1, nrow(pi_data), 10), ]
+pi_data_stripped <- pi_data[seq(1, nrow(pi_data), 20), ]
+
+plotPi <- ggplot(data = pi_data_strip, aes(x = BIN_START, y = PI)) +
+  geom_line(color = "#000000", linewidth = 0.5) +
+  facet_wrap(~ CHROM, scales = "free_x") +
+  theme_minimal() +
+  labs(
+    x = "Chromosome Position (Mbp)",
+    y = "Nucleotide Diversity (π)"
+  )+
+  scale_x_continuous(labels = scales::label_comma())+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  
+
+plotPi
+
+ggsave("../plots/ehtbf_coluzzii/pi_ehtbf_col.pdf", plot = plotPi, width = 5, height = 4)
+```
+
+##Tajimas D
+
+```{r}
+
+tajd <- read.table("ehtbf_coluzzii/ehtbf_coluzzii.Tajima.D", header = T)
+
+#1.000.000 bp equals 1 Mbp
+tajd$BIN_START <- tajd$BIN_START/1e6
+
+#remove irrelevant MT CHROM
+
+tajd <- tajd[tajd$CHROM != "AgamP4_Mt", ]
+
+#only select every 10th or 20th bin
+tajd_strip <- tajd[seq(1, nrow(tajd), 10), ]
+tajd_stripped <- tajd[seq(1, nrow(tajd), 20), ]
+
+
+plotTajD <- ggplot(data = tajd_strip, aes(x = BIN_START, y = TajimaD)) +
+  geom_line(color = "#000000", size = 0.5) +
+  facet_wrap(~ CHROM, scales = "free_x") +
+  theme_minimal() +
+  labs(
+    x = "Chromosome Position (Mbp)",
+    y = "Tajima's D"
+  )+
+  scale_x_continuous(labels = scales::label_comma())+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  
+
+plotTajD
+
+ggsave("../plots/ehtbf_coluzzii/tajd_ehtbf_col.pdf", plot = plotTajD, width = 5, height =4)
+```
+
+##Plot Pi and Taj D together
+
+```{r}
+#THIS ASSUMED UNEDITED STRAIGHT UP IMPORTED FILES
+#ALSO THE SCALING THING IS WRONG
+#BUT SUPPOSEDLY DOUBLE AXES PLOTS ARE FROWNED UPON ANYWAY
+#SO I WILL NOT CONTINUE THIS
+
+pi_data <- read.table("ehtbf_coluzzii/other/ehtbf_coluzzii.windowed.pi", header = TRUE)
+tajd <- read.table("ehtbf_coluzzii/other/ehtbf_coluzzii.Tajima.D", header = T)
+
+#adjust the position of pi data to match with tajd
+pi_data$BIN_START <- pi_data$BIN_START - 1
+merged_data <- merge(tajd, pi_data, by = c("CHROM", "BIN_START"))
+
+# Define scaling factor based on the range of the two variables
+pi_range <- max(merged_data$PI) - min(merged_data$PI)
+tajd_range <- max(merged_data$TajimaD) - min(merged_data$TajimaD)
+scale_factor <- pi_range / tajd_range
+
+
+merged_data$BIN_START <- merged_data$BIN_START/1e6
+merged_data <- merged_data[seq(1, nrow(merged_data), 20), ]
+merged_data <- merged_data %>% mutate(CHROM = gsub("AgamP4_", "", CHROM))
+
+
+pi_min <- min(merged_data$PI)
+
+plotCombPiTajD <- ggplot(merged_data, aes(x = BIN_START)) +
+  geom_line(aes(y = PI, 
+                color = "Pi")) +                                   
+  geom_line(aes(y = TajimaD / 100,           
+                color = "Tajima's D")) +
+  scale_y_continuous(name = "Nucleotide Diversity Pi",
+                     sec.axis = sec_axis(trans = ~ . * 100, name = "Tajima's D"))+
+  scale_color_manual(
+    name = "",
+    values = c("Pi" = "#b2182b", "Tajima's D" = "#67a9cf")
+  ) +
+  labs(x = "Position (Mbp)") +
+  theme_classic() +
+  theme(legend.position = "bottom") +
+  facet_grid(~ CHROM, scales = "free_x", space = "free_x") +
+  scale_x_continuous(
+    name = "Position (Mb)",
+    breaks = seq(0, 1000, by = 20)
+  ) +
+  guides(color = guide_legend(reverse = FALSE))
+
+plotCombPiTajD
+ggsave("../plots/ehtbf_coluzzii/other/tajdpi_combined.pdf", plot = plotCombPiTajD, height = 3, width = 7)
+```
+
+
+##FST (this was not part of final thesis)
+
+```{r}
+# WINDOWED
+
+fst_at_windows <- read.table("ehtbf_coluzzii/fst_origin/ehtbf_coluzzii_vickytengrela_fst_50kb.windowed.weir.fst", header=T)
+
+fst_at_windows <- fst_at_windows %>%
+  filter(!is.na(MEAN_FST)) %>% 
+  filter(CHROM != "AgamP4_Mt") %>% 
+  mutate(CHROM = gsub("AgamP4_", "", CHROM)) 
+
+fst_at_windows$CHROM <- factor(fst_at_windows$CHROM, levels = c('2L','2R','3L','3R','X'))
+
+#INDIVIDUAL 
+
+fst_tengrela_pnd_individual <- read.table("ehtbf_coluzzii/fst_mortality/ehtbf_coluzzii_fst_mortality_tengrela_pnd_individual.weir.fst", header = T)
+
+fst_tengrela_pnd_individual <- fst_tengrela_pnd_individual %>%
+  filter(WEIR_AND_COCKERHAM_FST >= 0.1)%>%
+  filter(CHROM != "AgamP4_Mt") %>% 
+  mutate(CHROM = gsub("AgamP4_", "", CHROM)) 
+
+# Create a data frame representing chromosomal inversions
+inversions <- data.frame(
+  CHROM = c('2L','2R','2R'), 
+  start = c(20528221, 19041572, 26768676), 
+  end = c(42072537, 26746778, 31488544)
+)
+# Convert 'Chrom' column to a factor for ordering
+inversions$CHROM = factor(inversions$CHROM)
+
+# Start building the ggplot object
+plot_fst_vicky_50kb <- ggplot() +
+  geom_line(data = fst_at_windows, 
+            aes(x = BIN_START, y = MEAN_FST), 
+            stat = "identity", 
+            color = '#332288',
+            linewidth = 0.2,
+            alpha = 1) +
+  geom_rect(data = inversions, 
+            aes(x = NULL, y = NULL, xmin = start, xmax = end, ymin = -0.04, ymax = 1), 
+            alpha = 0, 
+            color = "#CC6677", 
+            linetype = 'dashed') +
+  labs(x = "Chromosome", y = "FST") +
+  facet_grid(~CHROM, scales = 'free_x', space = 'free_x', switch = 'x') + 
+  theme_classic() + 
+  theme(
+    axis.text.x = element_blank(), 
+    axis.ticks.x = element_blank(), 
+    panel.margin = unit(0, "lines"),
+  ) +
+  scale_color_identity()+
+  scale_y_continuous(limits = c(-0.04, 1))
+
+plot_fst_vicky_50kb
+
+ggsave("../plots/ehtbf_coluzzii/fst/fst_at_ehtbf.pdf", plot = plot_fst_at, height = 4, width = 7)
+
+  geom_point(data = fst_origin_individual, 
+             aes(x = POS, 
+                 y = WEIR_AND_COCKERHAM_FST,
+                 color = ifelse(WEIR_AND_COCKERHAM_FST > 0.4, "red", "grey")),
+             size = 0.5) +
+
+```
+
+###Plot FST Final Trash
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+
+# Define 2La inversion region
+inversion_region <- data.frame(
+  chrom = "2L", 
+  start = 20.528221,   
+  end = 42.072537 
+)
+
+
+fst_tengrela_pnd_individual <- read.table("ehtbf_coluzzii/fst_mortality/ehtbf_coluzzii_fst_mortality_tengrela_pnd_individual.weir.fst", header = T)
+
+fst_tengrela_pnd_individual <- fst_tengrela_pnd_individual %>%
+  filter(WEIR_AND_COCKERHAM_FST >= 0.2)%>%
+  filter(CHROM != "AgamP4_Mt") %>% 
+  mutate(CHROM = gsub("AgamP4_", "", CHROM))%>%
+  mutate(comparison = "Tengrela PND", POS = POS) %>%
+  mutate(outlier = ifelse(
+    CHROM == inversion_region$chrom & POS >= inversion_region$start & POS <= inversion_region$end, 
+    ifelse(WEIR_AND_COCKERHAM_FST > 0.355, "outlier", "normal"),
+    ifelse(WEIR_AND_COCKERHAM_FST > 0.249, "outlier", "normal")
+  ))
+
+fst_tiefora_pnd_individual <- read.table("ehtbf_coluzzii/fst_mortality/ehtbf_coluzzii_fst_mortality_tiefora_pnd_individual.weir.fst", header = T)
+
+fst_tiefora_pnd_individual <- fst_tiefora_pnd_individual %>%
+  filter(WEIR_AND_COCKERHAM_FST >= 0.2)%>%
+  filter(CHROM != "AgamP4_Mt") %>% 
+  mutate(CHROM = gsub("AgamP4_", "", CHROM))%>%
+  mutate(comparison = "Tiefora PND", POS = POS)%>%
+  mutate(outlier = ifelse(
+    CHROM == inversion_region$chrom & POS >= inversion_region$start & POS <= inversion_region$end, 
+    ifelse(WEIR_AND_COCKERHAM_FST > 0.529, "outlier", "normal"),
+    ifelse(WEIR_AND_COCKERHAM_FST > 0.284, "outlier", "normal")
+  ))
+
+fst_tiefora_ig2_individual <- read.table("ehtbf_coluzzii/fst_mortality/ehtbf_coluzzii_fst_mortality_tiefora_ig2_individual.weir.fst", header = T)
+
+fst_tiefora_ig2_individual <- fst_tiefora_ig2_individual %>%
+  filter(WEIR_AND_COCKERHAM_FST >= 0.2)%>%
+  filter(CHROM != "AgamP4_Mt") %>% 
+  mutate(CHROM = gsub("AgamP4_", "", CHROM))%>%
+  mutate(comparison = "Tiefora IG2", POS = POS)%>%
+  mutate(outlier = ifelse(
+    CHROM == inversion_region$chrom & POS >= inversion_region$start & POS <= inversion_region$end, 
+    ifelse(WEIR_AND_COCKERHAM_FST > 0.457, "outlier", "normal"),
+    ifelse(WEIR_AND_COCKERHAM_FST > 0.416, "outlier", "normal")
+  ))
+
+fst_tengrela_ig2_individual <- read.table("ehtbf_coluzzii/fst_mortality/ehtbf_coluzzii_fst_mortality_tengrela_ig2_individual.weir.fst", header = T)
+
+fst_tengrela_ig2_individual <- fst_tengrela_ig2_individual %>%
+  filter(WEIR_AND_COCKERHAM_FST >= 0.2)%>%
+  filter(CHROM != "AgamP4_Mt") %>% 
+  mutate(CHROM = gsub("AgamP4_", "", CHROM))%>%
+  mutate(comparison = "Tengrela IG2", POS = POS)%>%
+  mutate(outlier = ifelse(
+    CHROM == inversion_region$chrom & POS >= inversion_region$start & POS <= inversion_region$end, 
+    ifelse(WEIR_AND_COCKERHAM_FST > 0.290, "outlier", "normal"),
+    ifelse(WEIR_AND_COCKERHAM_FST > 0.276, "outlier", "normal")
+  ))
+
+
+# Combine
+fst_combined <- bind_rows(fst_tengrela_pnd_individual, 
+                          fst_tiefora_pnd_individual,
+                          fst_tiefora_ig2_individual,
+                          fst_tengrela_ig2_individual)
+
+# Plot
+plot_combined <- ggplot(fst_combined, aes(x = POS, y = WEIR_AND_COCKERHAM_FST)) +
+  geom_point(aes(color = outlier), alpha = 0.5, size = 0.1) +
+  facet_grid(comparison ~ CHROM, 
+             scales = "free_x", 
+             space = "free_x", 
+             switch = "y") +
+  scale_y_continuous(limits = c(0.2, 0.8)) +
+  scale_x_continuous(
+    name = "Position (Mb)",
+    breaks = seq(0, 1000, by = 20)
+  ) +
+  scale_color_manual(values = c("normal" = "black", "outlier" = "#CC6677")) +
+  labs(y = "FST") +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 8),
+    axis.ticks.x = element_line(),
+    # Restore and style the facet label boxes
+    strip.placement = "outside",
+    strip.background = element_rect(color = "black", fill = "white", linewidth = 1),
+    strip.text = element_text(color = "black"),
+  )
+
+# Show plot
+print(plot_combined)
+
+```
+
+###Plot FST Final Good
+
+```{r}
+fst_tengrela_windows <- read.table("ehtbf_coluzzii/fst_mortality/ehtbf_coluzzii_fst_mortality_tengrela_5kb.windowed.weir.fst", header=T)
+
+fst_tengrela_windows <- fst_tengrela_windows %>%
+  filter(!is.na(MEAN_FST)) %>% 
+  filter(CHROM != "AgamP4_Mt") %>% 
+  mutate(CHROM = gsub("AgamP4_", "", CHROM), 
+         group = "Alive:Dead (Tengrela)",
+         BIN_START = BIN_START/1e6)
+
+fst_tengrela_windows$CHROM <- factor(fst_tengrela_windows$CHROM, levels = c('2L','2R','3L','3R','X'))
+
+fst_tiefora_windows <- read.table("ehtbf_coluzzii/fst_mortality/ehtbf_coluzzii_fst_mortality_tiefora_5kb.windowed.weir.fst", header=T)
+
+fst_tiefora_windows <- fst_tiefora_windows %>%
+  filter(!is.na(MEAN_FST)) %>% 
+  filter(CHROM != "AgamP4_Mt") %>% 
+  mutate(CHROM = gsub("AgamP4_", "", CHROM), 
+         group = "Alive:Dead (Tiefora)",
+         BIN_START = BIN_START/1e6) 
+
+fst_tiefora_windows$CHROM <- factor(fst_tiefora_windows$CHROM, levels = c('2L','2R','3L','3R','X'))
+
+
+
+
+fst_combined <- bind_rows(fst_tiefora_windows, fst_tengrela_windows)
+
+# Plot
+plot_combined <- ggplot(fst_combined, aes(x = BIN_START, y = WEIGHTED_FST)) +
+  geom_point(alpha = 0.5, size = 0.1) +
+  facet_grid(group ~ CHROM, 
+             scales = "free_x", 
+             space = "free_x", 
+             switch = "y") +
+  scale_y_continuous(limits = c(-0.01, 0.3)) +
+  scale_x_continuous(
+    name = "Position (Mb)",
+    breaks = seq(0, 1000, by = 20)
+  ) +
+  labs(y = "FST") +
+  theme_classic() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1, size = 8),
+    axis.ticks.x = element_line(),
+    # Restore and style the facet label boxes
+    strip.placement = "outside",
+    strip.background = element_rect(color = "black", fill = "white", linewidth = 1),
+    strip.text = element_text(color = "black"),
+  )
+
+
+ggsave("../plots/ehtbf_coluzzii/fst/fst_mortality_tie_ten.pdf",plot = plot_combined, height = 4, width = 7)
+
+# Show plot
+print(plot_combined)
+
++
+  geom_rect(data = inversions,
+            aes(x = NULL, y = NULL, xmin = start, xmax = end, ymin=0.37, ymax=0.4),
+            alpha = 1,
+            fill = "grey",
+            color = "black")
+```
+
+
+## HWE 
+
+Stuff we need, only run this once.
+```{r}
+# Function to extract the heterozygote value from the formatted X/Y/Z string
+extract_het <- function(x) {
+  as.numeric(strsplit(x, "/")[[1]][2]) # Extract the middle value
+}
+
+# Create a data frame representing chromosomal inversions
+inversions <- data.frame(
+  CHR = c('2L','2R','2R'), 
+  start = c(20.528221, 19.041572, 26.768676), 
+  end = c(42.072537, 26.746778, 31.488544)
+)
+inversions$CHR = factor(inversions$CHR)
+
+```
+
+
+```{r}
+
+hwe_pnd <- read.table("ehtbf_coluzzii/other/ehtbf_coluzzii_all.hwe", header = T)
+
+# Process the dataset
+binned_hwe_all <- hwe_pnd %>%
+  rowwise() %>%
+  mutate(
+    OBS_HET = extract_het(OBS.HOM1.HET.HOM2.) + 1,  
+    E_HET = extract_het(E.HOM1.HET.HOM2.) + 1,      
+    RATIO = OBS_HET / E_HET          
+  ) %>%
+  ungroup() %>%
+  mutate(
+    BIN = (POS %/% 1000000) * 1000000 + 1, 
+    BIN_START = BIN
+  ) %>%
+  group_by(CHR, BIN) %>%
+  summarise(AVG_RATIO = mean(RATIO, na.rm = TRUE), .groups = "drop")
+
+rm(hwe_pnd)
+
+binned_hwe_all <- read.table("ehtbf_coluzzii/other/ehtbf_coluzzii_all_binned.hwe", header = T, sep = ",")
+
+hwe_input_all <- binned_hwe_all %>%
+  filter(CHR != "AgamP4_Mt") %>% 
+  mutate(
+    BIN = BIN/1e6,
+    CHR = sub("AgamP4_", "", CHR), 
+    CHR = factor(CHR, levels = c("2L", "2R", "3L", "3R", "X"))
+  )
+
+
+plothwe_all <- ggplot() +
+  geom_line(data = hwe_input_all,
+            aes(x = BIN, y = AVG_RATIO),
+            stat = "identity",
+            color = 'black',
+            alpha = 1,
+            linewidth = 0.5) +
+  geom_rect(data = inversions,
+            aes(x = NULL, y = NULL, xmin = start, xmax = end, ymin=1.05, ymax=1.09),
+            alpha = 1,
+            fill = "grey",
+            color = "black") +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "grey", size = 0.5) +
+  facet_grid(~CHR, scales = 'free_x', space = "free_x", switch = "x") +
+  theme_classic() +
+  theme(
+    strip.text.x = element_blank(),     # Hide facet labels
+    strip.background = element_blank(), # Remove background strip
+    axis.text.x = element_text(),       # Ensure x-axis text is shown
+    axis.title.x = element_text()       # Ensure x-axis title is shown
+  ) +
+  labs(
+    x = "Chromosome",
+    y = "Ho/He ratio"
+  ) +
+  scale_x_continuous(
+    name = "Position (Mb)",
+    breaks = seq(0, 1000, by = 20)
+  ) +
+  scale_y_continuous(limits = c(0.35, 1.1))
+
+
+plothwe_all
+
+ggsave("../plots/ehtbf_coluzzii/other/heterozygosity_all.pdf", plot = plothwe_all, width = 7, height = 2)
+
+write.csv(x = hwe_input_pnd,file = "ehtbf_coluzzii/other/ehtbf_coluzzii_pnd_binned.hwe")
+
+```

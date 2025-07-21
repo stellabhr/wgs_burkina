@@ -1,0 +1,445 @@
+---
+title: "Aims"
+author: "Stella Bähr"
+date: "2025-01-28"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+options(bitmapType='cairo')
+```
+
+#Gambiae vs. Coluzzii
+##Load the File
+
+```{r}
+#read genotype calls from our sample at the relevant positions
+ehtbf_aims <- read.delim("ehtbf_aims.txt", header = T)
+
+ehtbf_aims <- ehtbf_aims %>%
+  mutate(
+    ALT1 = sapply(strsplit(as.character(ALT), ","), `[`, 1), # First value before the comma
+    ALT2 = sapply(strsplit(as.character(ALT), ","), `[`, 2)  # Second value after the comma
+  )
+
+#subset to only biallelic for now
+ehtbf_aims_biallelic <- ehtbf_aims %>%
+  filter(is.na(ALT2))
+
+#create ID
+ehtbf_aims_biallelic <- ehtbf_aims_biallelic %>%
+  mutate(ID = paste(CHROM, POS, sep = ":"))%>%
+  select(ehtbf_aims_biallelic, everything(), -ALT1, -ALT2)
+
+#read the annotated AIMs
+aims <- read.delim("gamb_vs_colu_aims.csv", header = F)
+colnames(aims) <- c("CHR","POS","species","ALT")
+
+aims <- aims %>%
+  mutate(ID = paste(CHR, POS, sep = ":"))%>%
+  select(aims,ID,species,ALT)
+
+aims_restructured <- aims %>%
+  pivot_wider(
+    id_cols = ID,                # Use ID as the unique identifier
+    names_from = species,        # Create new columns based on Species
+    values_from = ALT,           # Fill new columns with ALT values
+    names_prefix = "ALT_"        # Prefix for the new columns
+  )
+
+#get rid of different genotype conventions (if using phased data this should not be necessary)
+ehtbf_aims_biallelic <- ehtbf_aims_biallelic %>%
+  mutate(across(6:141, ~ gsub("/", "|", .)))
+
+#turn genotype calls into numerics
+ehtbf_aims_biallelic <- ehtbf_aims_biallelic %>%
+  mutate(across(6:141, ~ replace(., . == "1|1", 1))) %>%
+  mutate(across(6:141, ~ replace(., . == "0|1", 0.5))) %>%
+  mutate(across(6:141, ~ replace(., . == "1|0", 0.5))) %>%
+  mutate(across(6:141, ~ replace(., . == "0|0", 0))) %>%
+  mutate(across(6:141, ~ replace(., . == ".|.", 0.5))) 
+
+```
+
+##Process Variants and Plot
+
+```{r}
+#match ID in ehtbf_aims_biallelic and aims
+#COL:  Ref = ALT_Col and the genotype is 0 OR Alt = ALT_Col and the genotype is either 0.5 or 1
+#GAM: Ref = ALT_Gamb and the genotype is 0 OR if Alt = ALT_gamb and the genotype is either 0.5 or 1 
+
+#for plotting the gamb/colu, we need to exclude the ara samples
+
+# Define unwanted numbers
+unwanted_ids <- c("27", "32", "34", "35", "48", "51", "53", "64", "72", "78", "89")
+
+# Build regex pattern: matches "R00" followed by any of the numbers
+pattern <- paste0("R00(", paste(unwanted_ids, collapse = "|"), ")")
+
+# Remove matching columns
+ehtbf_aims_biallelic <- ehtbf_aims_biallelic[, !grepl(pattern, colnames(ehtbf_aims_biallelic))]
+
+# Put all into one dataframe
+ehtbf_aims_biallelic <- ehtbf_aims_biallelic %>%
+  left_join(aims_restructured %>%select(ID, ALT_coluzzi, ALT_gambiae), by = "ID")
+
+
+##Now process before plotting
+
+process_gambcolu_data <- function(df) {
+  for (sample_col in 6:ncol(df)) {
+    df[[sample_col]] <- mapply(function(genotype, ref, alt, alt_colu, alt_gamb) {
+      # Return NA if any relevant value is NA
+      if (is.na(genotype) || is.na(ref) || is.na(alt) || is.na(alt_colu) || is.na(alt_gamb)) {
+        return(NA)
+      }
+
+      if (genotype == 0) {
+        if (ref == alt_colu) return("Coluzzii")
+        if (ref == alt_gamb) return("Gambiae")
+        return(NA)
+      } else if (genotype == 1) {
+        if (alt == alt_colu) return("Coluzzii")
+        if (alt == alt_gamb) return("Gambiae")
+        return(NA)
+      } else if (genotype == 0.5) {
+        return("Heterozygous")
+      } else {
+        return(NA)
+      }
+    }, df[[sample_col]], df$REF, df$ALT, df$ALT_coluzzi, df$ALT_gambiae)
+  }
+  return(df)
+}
+
+
+# Apply function
+gambcolu_processed <- process_gambcolu_data(ehtbf_aims_biallelic)
+
+# Reshape to long format
+gambcolu_long <- gambcolu_processed %>%
+  pivot_longer(cols = 6:(ncol(gambcolu_processed)-2),  # avoid ALT_coluzzi & ALT_gambiae
+               names_to = "Sample", 
+               values_to = "Mutation_Type") %>%
+  dplyr::filter(!is.na(Mutation_Type)) %>%
+  mutate(
+    Mutation_Type = factor(Mutation_Type, levels = c("Coluzzii", "Gambiae", "Heterozygous")),
+    POS_numeric = as.numeric(POS)
+  )
+
+gambcolu_long <- gambcolu_long %>% dplyr::filter(!is.na(Mutation_Type))
+gambcolu_long$POS <- as.character(gambcolu_long$POS)
+gambcolu_long$Mutation_Type <- factor(gambcolu_long$Mutation_Type, levels = c("Coluzzii", "Gambiae", "Heterozygous"))
+gambcolu_long$POS_numeric <- as.numeric(gambcolu_long$POS)
+gambcolu_long$CHROM <- gsub("^AgamP4_", "", gambcolu_long$CHROM)
+
+
+# Plot
+plotaimsgambcolu <- ggplot(gambcolu_long, aes(x = POS, y = Sample, fill = Mutation_Type)) +
+  geom_tile()+
+  scale_fill_manual(values = c("Gambiae" = "#009E73", "Coluzzii" = "lightgrey", "Heterozygous" = "orange"),
+                    name = "AIM Genotype") +
+  facet_wrap(~ CHROM, scales = "free_x",nrow = 1) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_blank(),  
+    axis.text.y = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.ticks.y = element_blank()
+  ) +
+  labs(x = "Position", y = "Samples")
+
+plotaimsgambcolu
+
+
+ggsave("../../plots/ehtbf_coluzzii/thesis/aimsgambcolu.pdf", plot = plotaimsgambcolu, width = 16, height = 5, units = "cm")
+
+```
+
+Different type of plot (a bunch of tiny histograms)
+
+```{r}
+# Get sample columns (all columns corresponding to genotypes)
+sample_columns <- colnames(ehtbf_aims_biallelic)[6:130] # Adjust range if needed
+
+# Initialize a data frame to store results
+summary_counts <- data.frame(Sample = sample_columns, An.coluzzii = 0, An.gambiae = 0)
+
+# Loop through each sample to compute counts
+for (sample in sample_columns) {
+  ehtbf_aims_biallelic <- ehtbf_aims_biallelic %>%
+    mutate(
+      # Determine whether each row corresponds to Coluzzii for this sample
+      An.coluzzii = (
+        (REF == ALT_coluzzi & .data[[sample]] == 0) |       
+        (ALT == ALT_coluzzi & .data[[sample]] %in% c(0.5, 1))
+      ),
+      
+      # Determine whether each row corresponds to Gambiae for this sample
+      An.gambiae = (
+        (REF == ALT_gambiae & .data[[sample]] == 0) |       
+        (ALT == ALT_gambiae & .data[[sample]] %in% c(0.5, 1))
+      )
+    )
+  
+  # Summarize counts for this sample
+  summary_counts <- summary_counts %>%
+    mutate(
+      An.coluzzii = ifelse(Sample == sample, sum(ehtbf_aims_biallelic$An.coluzzii, na.rm = TRUE), An.coluzzii),
+      An.gambiae = ifelse(Sample == sample, sum(ehtbf_aims_biallelic$An.gambiae, na.rm = TRUE), An.gambiae)
+    )
+}
+
+# Reshape the summary_counts to long format for easier plotting
+summary_long <- summary_counts %>%
+  pivot_longer(cols = -Sample, names_to = "Species", values_to = "Count")
+
+# Calculate the percentage for each pie slice
+summary_long <- summary_long %>%
+  group_by(Sample) %>%
+  mutate(Percentage = Count / sum(Count) * 100)
+
+summary_long$Sample <- substr(summary_long$Sample, 1, 5)
+
+# Plot pie charts
+aimsplot <- ggplot(summary_long, aes(x = "", y = Percentage, fill = Species)) +
+  geom_bar(stat = "identity", width = 1) +  # Create bar chart as a pie
+  coord_polar(theta = "y") +  # Transform to pie chart
+  facet_wrap(~Sample, scales = "free", ncol = 16) + 
+  scale_fill_manual(values = c("An.coluzzii" = "#44AA99", "An.gambiae" = "#E4CB4D")) +
+  theme_void() +
+  theme(
+    strip.text = element_text(size = 6), 
+    plot.title = element_blank(),
+    axis.title = element_blank(),  
+    legend.title = element_blank(), 
+    legend.text = element_text(size = 6),  
+  )
+
+aimsplot
+ggsave("../../plots/aimspie.pdf", plot = aimsplot, width = 7, height = 6)
+```
+
+##Arabiensis vs. GambColu
+
+Arabiensis? in MY coluzzii samples? its more likely than you think. Essentially the same as above but now with Arab AIMS.
+
+
+```{r}
+ehtbf_aims_arab <- read.delim("ehtbf_aims_arab.txt", header = T)
+
+ehtbf_aims_arab <- ehtbf_aims_arab %>%
+  mutate(
+    ALT1 = sapply(strsplit(as.character(ALT), ","), `[`, 1), # First value before the comma
+    ALT2 = sapply(strsplit(as.character(ALT), ","), `[`, 2)  # Second value after the comma
+  )
+
+#subset to only biallelic for now
+ehtbf_aims_arab_biallelic <- ehtbf_aims_arab %>%
+  filter(is.na(ALT2))
+
+#create ID
+ehtbf_aims_arab_biallelic <- ehtbf_aims_arab_biallelic %>%
+  mutate(ID = paste(CHROM, POS, sep = ":")) %>%
+  select(everything(), -ALT1, -ALT2)
+
+#read the aims
+aimsarab <- read.delim("gambcolu_vs_arab_aims.csv", header = F)
+colnames(aimsarab) <- c("CHR","POS","species","ALT")
+
+aimsarab <- aimsarab %>%
+  mutate(ID = paste(CHR, POS, sep = ":"))%>%
+  select(ID,species,ALT)
+
+aimsarab_restructured <- aimsarab %>%
+  pivot_wider(
+    id_cols = ID,                # Use ID as the unique identifier
+    names_from = species,        # Create new columns based on Species
+    values_from = ALT,           # Fill new columns with ALT values
+    names_prefix = "ALT_"        # Prefix for the new columns
+  )
+
+
+ehtbf_aims_arab_biallelic <- ehtbf_aims_arab_biallelic %>%
+  mutate(across(6:141, ~ gsub("/", "|", .)))
+
+ehtbf_aims_arab_biallelic <- ehtbf_aims_arab_biallelic %>%
+  mutate(across(6:141, ~ replace(., . == "1|1", 1))) %>%
+  mutate(across(6:141, ~ replace(., . == "0|1", 0.5))) %>%
+  mutate(across(6:141, ~ replace(., . == "1|0", 0.5))) %>%
+  mutate(across(6:141, ~ replace(., . == "0|0", 0))) %>%
+  mutate(across(6:141, ~ replace(., . == ".|.", 0.5))) 
+
+```
+
+
+now the counting again
+
+```{r}
+#match ID in ehtbf_aims_biallelic and aims
+#ARAB:  Ref = ALT_arabiensis and the genotype is 0 OR Alt = ALT_arabiensis and the genotype is either 0.5 or 1
+#GambColu: Ref = ALT_gambcolu and the genotype is 0 OR if Alt = ALT_gambcolu and the genotype is either 0.5 or 1 
+
+
+
+# Put all into one dataframe
+ehtbf_aims_arab_biallelic <- ehtbf_aims_arab_biallelic %>%
+  left_join(aimsarab_restructured %>% select(ID, ALT_gambcolu, ALT_arabiensis), by = "ID")
+
+# Get sample columns (all columns corresponding to genotypes)
+
+sample_names <- read.delim("../../stuff/samplesets/samples_all_species.txt", header = F)
+colnames(ehtbf_aims_arab_biallelic)[6:141] <- sample_names$V1
+sample_columns_arab <- colnames(ehtbf_aims_arab_biallelic)[6:141] # Adjust range if needed
+
+# Initialize a data frame to store results
+summary_counts_arab <- data.frame(Sample = sample_columns_arab, An.gambcolu = 0, An.arabiensis = 0)
+
+# Loop through each sample to compute counts
+for (sample in sample_columns_arab) {
+  ehtbf_aims_arab_biallelic <- ehtbf_aims_arab_biallelic %>%
+    mutate(
+      # Determine whether each row corresponds to Coluzzii for this sample
+      An.arabiensis = (
+        (REF == ALT_arabiensis & .data[[sample]] == 0) |       
+        (ALT == ALT_arabiensis & .data[[sample]] %in% c(0.5, 1))
+      ),
+      
+      # Determine whether each row corresponds to Gambiae for this sample
+      An.gambcolu = (
+        (REF == ALT_gambcolu & .data[[sample]] == 0) |       
+        (ALT == ALT_gambcolu & .data[[sample]] %in% c(0.5, 1))
+      )
+    )
+  
+  # Summarize counts for this sample
+  summary_counts_arab <- summary_counts_arab %>%
+    mutate(
+      An.arabiensis = ifelse(Sample == sample, sum(ehtbf_aims_arab_biallelic$An.arabiensis, na.rm = TRUE), An.arabiensis),
+      An.gambcolu = ifelse(Sample == sample, sum(ehtbf_aims_arab_biallelic$An.gambcolu, na.rm = TRUE), An.gambcolu)
+    )
+}
+```
+
+and plot
+
+```{r}
+# Reshape the summary_counts to long format for easier plotting
+summary_arab_long <- summary_counts_arab %>%
+  pivot_longer(cols = -Sample, names_to = "Species", values_to = "Count")
+
+# Calculate the percentage for each pie slice
+summary_arab_long <- summary_arab_long %>%
+  group_by(Sample) %>%
+  mutate(Percentage = Count / sum(Count) * 100)
+
+summary_arab_long$Sample <- substr(summary_arab_long$Sample, 1, 5)
+
+# Plot pie charts
+aimsplotarab <- ggplot(summary_arab_long, aes(x = "", y = Percentage, fill = Species)) +
+  geom_bar(stat = "identity", width = 1) +  # Create bar chart as a pie
+  coord_polar(theta = "y") +  # Transform to pie chart
+  facet_wrap(~Sample, scales = "free", ncol = 16) + 
+  scale_fill_manual(values = c("An.arabiensis" = "#332288", "An.gambcolu" = "#44AA99")) +
+  theme_void() +
+  theme(
+    strip.text = element_text(size = 6), 
+    plot.title = element_blank(),
+    axis.title = element_blank(),  
+    legend.title = element_blank(), 
+    legend.text = element_text(size = 6),  
+  )
+
+aimsplotarab
+ggsave("../../plots/aimspiearab.pdf", plot = aimsplotarab, width = 7, height = 6)
+```
+
+Actual fancy plot across chromosomes 
+
+```{r}
+# Load necessary libraries
+
+# Assuming the data has the columns: CHROM, POS, REF, ALT, ALT_arabiensis, ALT_gambcolu, and 136 sample columns
+
+arab_df <- do.call(rbind, lapply(ehtbf_aims_arab_biallelic, function(x) {
+  data.frame(x, stringsAsFactors = FALSE)
+}))
+
+
+# Create the species mutation dataframe
+process_mutation_data <- function(df) {
+  for (sample_col in 6:ncol(df)) {
+    df[[sample_col]] <- mapply(function(genotype, ref, alt, alt_arab, alt_gamb) {
+      if (is.na(genotype)) return(NA)
+
+      if (genotype == 0) {
+        if (isTRUE(ref == alt_arab)) return("Arab")
+        if (isTRUE(ref == alt_gamb)) return("GambColu")
+        return(NA)
+      } else if (genotype == 1) {
+        if (isTRUE(alt == alt_arab)) return("Arab")
+        if (isTRUE(alt == alt_gamb)) return("GambColu")
+        return(NA)
+      } else if (genotype == 0.5) {
+        return("Heterozygous")
+      } else {
+        return(NA)
+      }
+    }, df[[sample_col]], df$REF, df$ALT, df$ALT_arabiensis, df$ALT_gambcolu)
+  }
+  return(df)
+}
+# Process the dataframe
+arab_processed <- process_mutation_data(ehtbf_aims_arab_biallelic)
+
+# Check the processed dataframe
+head(arab_processed)
+
+#select fewer lines for plotting
+arab_sampled <- arab_processed %>%
+  group_by(CHROM) %>%
+  slice_sample(n = 30) %>%
+  ungroup()
+
+# Reshape the dataframe to long format
+arab_long <- arab_sampled %>%
+  pivot_longer(cols = 6:ncol(arab_sampled), 
+               names_to = "Sample", 
+               values_to = "Mutation_Type")
+
+# Check the reshaped dataframe
+head(arab_long)
+
+arab_long <- arab_long %>% filter(!is.na(Mutation_Type))
+arab_long$POS <- as.character(arab_long$POS)
+arab_long$Mutation_Type <- factor(arab_long$Mutation_Type, levels = c("Arab", "GambColu", "Heterozygous"))
+arab_long$POS_numeric <- as.numeric(arab_long$POS)
+arab_long$CHROM <- gsub("^AgamP4_", "", arab_long$CHROM)
+
+
+
+plotaimsarab <- ggplot(arab_long, aes(x = POS, y = Sample, fill = Mutation_Type)) +
+  geom_tile()+
+  scale_fill_manual(values = c("Arab" = "#009E73", "GambColu" = "lightgrey", "Heterozygous" = "orange"),
+                    name = "AIM Genotype") +
+  facet_wrap(~ CHROM, scales = "free_x",nrow = 1) +
+  theme_classic() +
+  theme(
+    axis.text.x = element_blank(),  
+    axis.text.y = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.ticks.y = element_blank()
+  ) +
+  labs(x = "Position", y = "Samples")
+
+plotaimsarab
+ggsave("../../plots/ehtbf_coluzzii/thesis/aimsarab.pdf", plot = plotaimsarab, width = 16, height = 5, units = "cm")
+
+```

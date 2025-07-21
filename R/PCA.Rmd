@@ -1,0 +1,724 @@
+---
+title: "PCA"
+author: "Stella Bähr"
+date: "2024-12-05"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Generating PCA Plot for WGS BF Data
+
+Load the libraries and colors etc
+```{r, echo = FALSE}
+library(tidyverse)
+library(ggplot2)
+options(bitmapType='cairo')
+
+
+c("#000000", "#E69F00","#56B4E9","#009E73","#F0E442","#0072B2","#D55E00","#CC79A7")
+
+```
+
+### EHTBF samples
+Chromosome 3L
+
+```{r}
+pca3L <- read_table2("3L_ehtbf/ehtbf_3L_pcadata.eigenvec", col_names = FALSE)
+eigenval3L <- scan("3L_ehtbf/ehtbf_3L_pcadata.eigenval")
+
+# sort out the pca data of just our data
+# remove nuisance column
+pca3L <- pca3L[-1,]
+# set names
+names(pca3L)[1] <- "ind"
+sample_names <- read.delim("../stuff/sample_names.txt", header = F)
+pca3L$ind <- sample_names$V1
+#pca3L$ind <- substr(pca3L$ind, 1, 23)
+
+names(pca3L)[2:ncol(pca3L)] <- paste0("PC", 1:(ncol(pca3L)-1))
+
+# sort out the individual metadata
+# bednet
+net<- rep(NA, length(pca3L$ind))
+net[grep("IG2", pca3L$ind)] <- "IG2"
+net[grep("PND", pca3L$ind)] <- "PermaNet_Dual"
+# location
+loc <- rep(NA, length(pca3L$ind))
+loc[grep("Tie", pca3L$ind)] <- "Tiefora"
+loc[grep("Ten", pca3L$ind)] <- "Tengrela"
+#mortality
+mort <- rep(NA, length(pca3L$ind))
+mort[grep("prior_72h", pca3L$ind)] <- "Within 72h"
+mort[grep("after_72h", pca3L$ind)] <- "After 72h"
+
+pca3L <- as.tibble(data.frame(pca3L, loc, net, mort))
+
+pve3L <- data.frame(PC = 1:10, pve = eigenval3L/sum(eigenval3L)*100)
+plot_pve3L <- ggplot(pve3L, aes(PC, pve))+ 
+  geom_bar(stat = "identity")+ 
+  ylab("Percentage Variance Explained")+ 
+  theme_light()
+plot_pve3L
+
+ggsave("../plots/elbow_3L.pdf", plot = plot_pve3L)
+
+plot_pca3L <- ggplot(pca3L, aes(as.numeric(PC1), as.numeric(PC2), shape = net, fill = loc))+
+  geom_point(size=3, alpha = 0.8)+
+  scale_shape_manual(values = c(21, 22) )+
+  xlab(paste0("PC1 (", signif(pve3L$pve[1], 3), "%)")) +
+  ylab(paste0("PC2 (", signif(pve3L$pve[2], 3), "%)")) +
+  scale_fill_manual(values = c("#88CCEE","#CC6677"))+
+  guides(fill=guide_legend(override.aes=list(shape=21)))+
+  labs( shape ="Bed Net", fill = "Location")+
+  theme_bw()+
+  theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank())
+plot_pca3L
+
+ggsave("", plot = plot_pca3L, height = 4, width = 5)
+
+```
+
+Chromosome 3L No Outliers
+
+```{r}
+pca3Lstripped <- read_table2("ehtbf_final_3L_nooutliers_pcadata.eigenvec", col_names = FALSE)
+eigenval3Lstripped <- scan("ehtbf_final_3L_nooutliers_pcadata.eigenval")
+
+# sort out the pca data of just our data
+# remove nuisance column
+pca3Lstripped <- pca3Lstripped[-1,-1]
+# set names
+names(pca3Lstripped)[1] <- "ind"
+pca3Lstripped$ind <- substr(pca3Lstripped$ind, 1, 23)
+names(pca3Lstripped)[2:ncol(pca3Lstripped)] <- paste0("PC", 1:(ncol(pca3Lstripped)-1))
+
+# sort out the individual metadata
+# bednet
+net<- rep(NA, length(pca3Lstripped$ind))
+net[grep("IG2", pca3Lstripped$ind)] <- "IG2"
+net[grep("PND", pca3Lstripped$ind)] <- "PermaNet_Dual"
+# location
+loc <- rep(NA, length(pca3Lstripped$ind))
+loc[grep("Tie", pca3Lstripped$ind)] <- "Tiefora"
+loc[grep("Ten", pca3Lstripped$ind)] <- "Tengrela"
+#mortality
+mort <- rep(NA, length(pca3Lstripped$ind))
+mort[grep("prior_72h", pca3Lstripped$ind)] <- "Within 72h"
+mort[grep("after_72h", pca3Lstripped$ind)] <- "After 72h"
+
+pca3Lstripped <- as.tibble(data.frame(pca3Lstripped, loc, net, mort))
+
+pve3Lstripped <- data.frame(PC = 1:10, pve = eigenval3Lstripped/sum(eigenval3Lstripped)*100)
+plot_pve3Lstripped <- ggplot(pve3Lstripped, aes(PC, pve))+ 
+  geom_bar(stat = "identity")+ 
+  ylab("Percentage Variance Explained")+ 
+  theme_light()
+plot_pve3Lstripped
+
+ggsave("../plots/elbow_3L_stripped.pdf", plot = plot_pve3Lstripped)
+
+plot_pca3Lstripped <- ggplot(pca3Lstripped, aes(as.numeric(PC1), as.numeric(PC2), shape = net, fill = loc))+
+  geom_point(size=3, alpha = 0.8)+
+  scale_shape_manual(values = c(21, 22) )+
+  xlab(paste0("PC1 (", signif(pve3Lstripped$pve[1], 3), "%)")) +
+  ylab(paste0("PC2 (", signif(pve3Lstripped$pve[2], 3), "%)")) +
+  scale_fill_manual(values = c("#88CCEE","#CC6677"))+
+  guides(fill=guide_legend(override.aes=list(shape=21)))+
+  labs( shape ="Bed Net", fill = "Location")+
+  theme_bw()+
+  theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank())
+plot_pca3Lstripped
+
+ggsave("../plots/PCA_3L_stripped.pdf", plot = plot_pca3Lstripped, height = 4, width = 5)
+```
+
+Chromosome 3L 
+
+```{r}
+
+pca3L <-read_table2("3L_ehtbf/ehtbf_3L_pcadata.eigenvec", col_names = FALSE)
+eigenval3L <- scan("3L_ehtbf/ehtbf_3L_pcadata.eigenval") 
+
+# sort out the pca data of just our data
+# remove nuisance column
+pca3L <- pca3L[-1,]
+# set names
+names(pca3L)[1] <- "ind"
+#pca3L$ind <- substr(pca3L$ind, 1, 23)
+pca3L$ind <- sample_names$V1
+names(pca3L)[2:ncol(pca3L)] <- paste0("PC", 1:(ncol(pca3L)-1))
+
+# sort out the individual metadata
+# bednet
+net<- rep(NA, length(pca3L$ind))
+net[grep("IG2", pca3L$ind)] <- "IG2"
+net[grep("PND", pca3L$ind)] <- "PermaNet_Dual"
+# location
+loc <- rep(NA, length(pca3L$ind))
+loc[grep("Tie", pca3L$ind)] <- "Tiefora"
+loc[grep("Ten", pca3L$ind)] <- "Tengrela"
+#mortality
+mort <- rep(NA, length(pca3L$ind))
+mort[grep("prior_72h", pca3L$ind)] <- "Within 72h"
+mort[grep("after_72", pca3L$ind)] <- "After 72h"
+
+pca3L <- as.tibble(data.frame(pca3L, loc, net, mort))
+
+pve3L <- data.frame(PC = 1:10, pve = eigenval3L/sum(eigenval3L)*100)
+plot_pve3L <- ggplot(pve3L, aes(PC, pve))+ 
+  geom_bar(stat = "identity")+ 
+  ylab("Percentage Variance Explained")+ 
+  theme_light()
+
+plot_pve3L
+ggsave("../plots/elbow_3L.pdf", plot = plot_pve3L)
+
+plot_pca3L <- ggplot(pca3L, aes(as.numeric(PC1), as.numeric(PC2), shape = net, fill = loc))+
+  geom_point(size=3, alpha = 0.8)+
+  scale_shape_manual(values = c(21, 22) )+
+  xlab(paste0("PC1 (", signif(pve3L$pve[1], 3), "%)")) +
+  ylab(paste0("PC2 (", signif(pve3L$pve[2], 3), "%)")) +
+  scale_fill_manual(values = c("#88CCEE","#CC6677"))+
+  guides(fill=guide_legend(override.aes=list(shape=21)))+
+  labs( shape ="Bed Net", fill = "Location")+
+  theme_bw()+
+  theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank())
+plot_pca3L
+
+ggsave("../plots/PCA_3L.pdf", plot = plot_pca3L,height = 4, width = 5)
+
+plot_pca3L_PC3 <- ggplot(pca3L, aes(as.numeric(PC1), as.numeric(PC3), shape = net, fill = loc))+
+  geom_point(size=3, alpha = 0.8)+
+  scale_shape_manual(values = c(21, 22) )+
+  xlab(paste0("PC1 (", signif(pve3L$pve[1], 3), "%)")) +
+  ylab(paste0("PC3 (", signif(pve3L$pve[3], 3), "%)")) +
+  scale_fill_manual(values = c("#88CCEE","#CC6677"))+
+  guides(fill=guide_legend(override.aes=list(shape=21)))+
+  labs( shape ="Bed Net", fill = "Location")+
+  theme_bw()+
+  theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank())
+plot_pca3L_PC3
+
+ggsave("../plots/pca/PCA_ehtbf_3L_PC3.pdf", plot = plot_pca3L_PC3,height = 4, width = 5)
+
+```
+
+### Merged Samples
+
+For Chr3L merged EHTBF and Ag1000G
+
+```{r}
+pcamerged3Ldiy <- read_table2("3L_ehtbfcoluzzii_diyag1000g_pcadata.eigenvec",col_names = FALSE)
+eigenvalmerged3Ldiy <- scan("3L_ehtbfcoluzzii_diyag1000g_pcadata.eigenval")
+
+# sort out the pca data of merged samples
+#remove nuisance column and row
+pcamerged3Ldiy <- pcamerged3Ldiy[-1,]
+# set names
+names(pcamerged3Ldiy)[1] <- "sample"
+names(pcamerged3Ldiy)[2:ncol(pcamerged3Ldiy)] <- paste0("PC", 1:(ncol(pcamerged3Ldiy)-1))
+pcamerged3Ldiy$dataset <- ifelse(grepl("^A", pcamerged3Ldiy$sample), "Ag1000G BF",
+                  ifelse(grepl("^R", pcamerged3Ldiy$sample), "EHT BF", NA))
+
+
+#edit the sample name (needs to be more sophisticated for the eht bf samples)
+pcamerged3Ldiy$sample <- sapply(pcamerged3Ldiy$sample, function(x) {
+  if (startsWith(x, "A")) {
+    # Split by "_" and keep the first substring
+    strsplit(x, "_")[[1]][1]
+  } else if (startsWith(x, "R")) {
+    # Split by "_" and keep the first 5 substrings
+    paste(head(strsplit(x, "_")[[1]], 5), collapse = "_")
+  } else {
+    # Default case: return the original value
+    x
+  }
+})
+
+
+#Add relevant metadata for plotting
+metadata_BF <- read_csv("../ag1000g/metadata_BF.csv")
+metadata_BF$sample_id <- substr(metadata_BF$sample_id,1,6)
+
+pcamerged3Ldiy <- pcamerged3Ldiy %>%
+  left_join(metadata_BF %>% select(sample_id, aim_species), 
+            by = c("sample" = "sample_id")) %>%
+  mutate(species = ifelse(is.na(aim_species), "unknown", aim_species)) %>%
+  select(-aim_species)
+
+Source <- rep(NA, length(pcamerged3Ldiy$sample))
+Source[grep("Tie", pcamerged3Ldiy$sample)] <- "Tiefora"
+Source[grep("Ten", pcamerged3Ldiy$sample)] <- "Tengrela"
+Source[grep("arabiensis", pcamerged3Ldiy$species)] <- "Ag1000G An. arabiensis"
+Source[grep("coluzzii", pcamerged3Ldiy$species)] <- "Ag1000G An. coluzzii"
+Source[grep("gambiae", pcamerged3Ldiy$species)] <- "Ag1000G An. gambiae"
+
+Mortality <- rep(NA, length(pcamerged3Ldiy$sample))
+Mortality[grep("prior_72h", pcamerged3Ldiy$sample)] <- "Within 72h"
+Mortality[grep("after_72", pcamerged3Ldiy$sample)] <- "After 72h"
+Mortality[grep("Ag1000G BF", pcamerged3Ldiy$dataset)] <- "Ag1000G NA"
+
+
+pcamerged3Ldiy <- as.tibble(data.frame(pcamerged3Ldiy, Source, Mortality))
+
+pvemerged3Ldiy <- data.frame(PC = 1:10, pve = eigenvalmerged3Ldiy/sum(eigenvalmerged3Ldiy)*100)
+plot_pvemerged3Ldiy <- ggplot(pvemerged3Ldiy, aes(PC, pve))+ 
+  geom_bar(stat = "identity")+ 
+  ylab("Percentage Variance Explained")+ 
+  theme_light()
+
+plot_pvemerged3Ldiy
+ggsave("../plots/elbow_3L_merged.pdf", plot = plot_pvemerged3Ldiy)
+
+
+plot_pcamerged3Ldiy <- ggplot(pcamerged3Ldiy, aes(as.numeric(PC1), as.numeric(PC2), fill = Source, shape = Mortality))+
+  geom_point(size=3,alpha=0.8, color = "black")+
+  scale_shape_manual(values = c(22,21,23) )+
+  xlab(paste0("PC1 (", signif(pvemerged3Ldiy$pve[1], 3), "%)")) +
+  ylab(paste0("PC2 (", signif(pvemerged3Ldiy$pve[2], 3), "%)")) +
+  scale_fill_manual(values = c("#44AA99","#E4CB4D","#88CCEE","#CC6677"))+
+  guides(fill=guide_legend(override.aes=list(shape=21)))+
+  labs(title = "")+
+  theme_bw()+
+  theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank())
+
+plot_pcamerged3Ldiy
+ggsave("../plots/ehtbf_coluzzii/PCA_merged_3L_diy.pdf", plot = plot_pcamerged3Ldiy,height = 4, width = 5)
+
+plot_pcamerged3Ldiy_PC3 <- ggplot(pcamerged3Ldiy, aes(as.numeric(PC1), as.numeric(PC3), fill = Source, shape = Mortality))+
+  geom_point(size=3,alpha=0.8, color = "black")+
+  scale_shape_manual(values = c(22,21,23) )+
+  xlab(paste0("PC1 (", signif(pvemerged3Ldiy$pve[1], 3), "%)")) +
+  ylab(paste0("PC3 (", signif(pvemerged3Ldiy$pve[3], 3), "%)")) +
+  scale_fill_manual(values = c("#44AA99","#E4CB4D","#88CCEE","#CC6677"))+
+  guides(fill=guide_legend(override.aes=list(shape=21)))+
+  labs(title = "")+
+  theme_bw()+
+  theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank())
+
+plot_pcamerged3Ldiy_PC3
+
+ggsave("../plots/pca/PCA_ehtbf1000g_3L_diy_PC3.pdf", plot = plot_pcamerged3Ldiy_PC3,height = 4, width = 5)
+
+```
+
+For Chr3L merged EHTBF, Ag1000G, AT and GOUNDRY and Tengrela
+
+```{r}
+pcamerged3Lall <- read_table2("3L_all_and_tengrela/3L_all_and_tengrela_pcadata.eigenvec",col_names = FALSE)
+eigenvalmerged3Lall <- scan("3L_all_and_tengrela/3L_all_and_tengrela_pcadata.eigenval")
+
+# sort out the pca data of merged samples
+#remove nuisance column and row
+pcamerged3Lall <- pcamerged3Lall[-1,]
+# set names
+names(pcamerged3Lall)[1] <- "sample"
+names(pcamerged3Lall)[2:ncol(pcamerged3Lall)] <- paste0("PC", 1:(ncol(pcamerged3Lall)-1))
+pcamerged3Lall$dataset <- ifelse(grepl("^AB", pcamerged3Lall$sample), "Ag1000G BF",
+                  ifelse(grepl("^R", pcamerged3Lall$sample), "This Study",
+                  ifelse(grepl("^ATG1", pcamerged3Lall$sample), "AT",  
+                  ifelse(grepl("^ATG2|^ATG3", pcamerged3Lall$sample), "Goundry",
+                  ifelse(grepl("Tengrela", pcamerged3Lall$sample), "Tengrela (2019)",       
+                  NA)))))
+
+
+#edit the sample name (needs to be more sophisticated for the eht bf samples)
+pcamerged3Lall$sample <- sapply(pcamerged3Lall$sample, function(x) {
+  if (startsWith(x, "A")) {
+    # Split by "_" and keep the first substring
+    strsplit(x, "_")[[1]][1]
+  } else if (startsWith(x, "R")) {
+    # Split by "_" and keep the first 5 substrings
+    paste(head(strsplit(x, "_")[[1]], 5), collapse = "_")
+  }  else {
+    # Default case: return the original value
+    x
+  }
+})
+
+
+#Add relevant metadata for plotting
+metadata_BF <- read_csv("../ag1000g/metadata_BF.csv")
+pcamerged3Lall <- pcamerged3Lall %>%
+  left_join(metadata_BF %>% select(sample_id, aim_species), 
+            by = c("sample" = "sample_id")) %>%
+  mutate(species = ifelse(is.na(aim_species), "unknown", aim_species)) %>%
+  select(-aim_species)
+
+pcamerged3Lall$Source <- case_when(
+  grepl("Tie", pcamerged3Lall$sample) ~ "This study",
+  grepl("Ten_", pcamerged3Lall$sample) ~ "This study",
+  grepl("arabiensis", pcamerged3Lall$species) ~ "Ag1000G - An. arabiensis",
+  grepl("coluzzii", pcamerged3Lall$species) ~ "Ag1000G - An. coluzzii",
+  grepl("gambiae", pcamerged3Lall$species) ~ "Ag1000G - An. gambiae",
+  grepl("AT", pcamerged3Lall$dataset) ~ "AT",
+  grepl("Goundry", pcamerged3Lall$dataset) ~ "Goundry",
+  grepl("Tengrela", pcamerged3Lall$dataset) ~ "Tengrela (2019)",
+  TRUE ~ NA_character_
+)
+
+pcamerged3Lall$Mortality <- case_when(
+  grepl("prior_72h", pcamerged3Lall$sample) ~ "Within 72h",
+  grepl("after_72", pcamerged3Lall$sample) ~ "After 72h",
+  grepl("Ag1000G BF", pcamerged3Lall$dataset) ~ "Ag1000G NA",
+  TRUE ~ NA_character_
+)
+
+
+pvemerged3Lall <- data.frame(PC = 1:10, pve = eigenvalmerged3Lall/sum(eigenvalmerged3Lall)*100)
+
+plot_pvemerged3Lall <- ggplot(pvemerged3Lall, aes(PC, pve))+ 
+  geom_bar(stat = "identity")+ 
+  ylab("Percentage Variance Explained")+ 
+  theme_light()
+
+plot_pvemerged3Lall
+ggsave("../plots/elbow_3L_all.pdf", plot = plot_pvemerged3Lall)
+
+
+plot_pcamerged3Lall <- ggplot(pcamerged3Lall, aes(as.numeric(PC1), as.numeric(PC2), fill = Source))+
+  geom_point(shape = 21, size = 3, alpha = 0.8, color = "black")+
+  xlab(paste0("PC1 (", signif(pvemerged3Lall$pve[1], 3), "%)")) +
+  ylab(paste0("PC2 (", signif(pvemerged3Lall$pve[2], 3), "%)")) +
+  scale_fill_manual(values = c("#009E73","#000000", "#E69F00","#F0E442","#CC79A7","#D55E00","#56B4E9"))+
+  guides(fill=guide_legend(override.aes=list(shape=21)))+
+  labs(title = "")+
+  theme_bw()+
+  theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank(),
+    legend.position = "none")
+
+plot_pcamerged3Lall
+ggsave("../plots/ehtbf_coluzzii/thesis/PCA_3L.pdf", plot = plot_pcamerged3Lall,height = 6, width = 6, units = "cm")
+
+
+plot_pcamerged3Lall_PC3 <- ggplot(pcamerged3Lall, aes(as.numeric(PC1), as.numeric(PC3), fill = Source))+
+  geom_point(shape = 21, size = 3, alpha = 0.8, color = "black")+
+  xlab(paste0("PC1 (", signif(pvemerged3Lall$pve[1], 3), "%)")) +
+  ylab(paste0("PC3 (", signif(pvemerged3Lall$pve[3], 3), "%)")) +
+  scale_fill_manual(values = c("#009E73","#000000", "#E69F00","#F0E442","#CC79A7","#D55E00","#56B4E9"))+
+  guides(fill=guide_legend(override.aes=list(shape=21)))+
+  labs(title = "")+
+  theme_bw()+
+  theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank())
+
+plot_pcamerged3Lall_PC3
+ggsave("../plots/ehtbf_final/thesis/PCA_all_and_tengrela_3L_PC3.pdf", plot = plot_pcamerged3Lall_PC3,height = 4, width = 9.6)
+```
+
+For Chr 3L merged EHTBF and Ag1000G
+
+```{r}
+pcamerged3L <- read_table2("3L_ehtbf_ag1000g/3L_merged_pcadata.eigenvec",col_names = FALSE)
+eigenvalmerged3L <- scan("3L_ehtbf_ag1000g/3L_merged_pcadata.eigenval")
+
+# sort out the pca data of merged samples
+#remove nuisance column and row
+pcamerged3L <- pcamerged3L[-1,]
+# set names
+names(pcamerged3L)[1] <- "sample"
+names(pcamerged3L)[2:ncol(pcamerged3L)] <- paste0("PC", 1:(ncol(pcamerged3L)-1))
+pcamerged3L$dataset <- ifelse(grepl("^A", pcamerged3L$sample), "Ag1000G BF",
+                  ifelse(grepl("^R", pcamerged3L$sample), "EHT BF", NA))
+
+
+#edit the sample name (needs to be more sophisticated for the eht bf samples)
+pcamerged3L$sample <- sapply(pcamerged3L$sample, function(x) {
+  if (startsWith(x, "A")) {
+    # Split by "_" and keep the first substring
+    strsplit(x, "_")[[1]][1]
+  } else if (startsWith(x, "R")) {
+    # Split by "_" and keep the first 5 substrings
+    paste(head(strsplit(x, "_")[[1]], 5), collapse = "_")
+  } else {
+    # Default case: return the original value
+    x
+  }
+})
+
+pcamerged3L$sample[297:nrow(pcamerged3L)] <- sample_names$V1
+
+#Add relevant metadata for plotting
+metadata_BF <- read_csv("../ag1000g/metadata_BF.csv")
+pcamerged3L <- pcamerged3L %>%
+  left_join(metadata_BF %>% select(sample_id, aim_species), 
+            by = c("sample" = "sample_id")) %>%
+  mutate(species = ifelse(is.na(aim_species), "unknown", aim_species)) %>%
+  select(-aim_species)
+
+Source <- rep(NA, length(pcamerged3L$sample))
+Source[grep("Tie", pcamerged3L$sample)] <- "Tiefora"
+Source[grep("Ten", pcamerged3L$sample)] <- "Tengrela"
+Source[grep("arabiensis", pcamerged3L$species)] <- "Ag1000G An. arabiensis"
+Source[grep("coluzzii", pcamerged3L$species)] <- "Ag1000G An. coluzzii"
+Source[grep("gambiae", pcamerged3L$species)] <- "Ag1000G An. gambiae"
+
+Mortality <- rep(NA, length(pcamerged3L$sample))
+Mortality[grep("prior_72h", pcamerged3L$sample)] <- "Within 72h"
+Mortality[grep("after_72", pcamerged3L$sample)] <- "After 72h"
+Mortality[grep("Ag1000G BF", pcamerged3L$dataset)] <- "Ag1000G NA"
+
+
+pcamerged3L <- as.tibble(data.frame(pcamerged3L, Source, Mortality))
+
+pvemerged3L <- data.frame(PC = 1:10, pve = eigenvalmerged3L/sum(eigenvalmerged3L)*100)
+plot_pvemerged3L <- ggplot(pvemerged3L, aes(PC, pve))+ 
+  geom_bar(stat = "identity")+ 
+  ylab("Percentage Variance Explained")+ 
+  theme_light()
+
+plot_pvemerged3L
+ggsave("../plots/elbow_3L_merged.pdf", plot = plot_pvemerged3L)
+
+
+plot_pcamerged3L <- ggplot(pcamerged3L, aes(as.numeric(PC1), as.numeric(PC2), fill = Source, shape = Mortality))+
+  geom_point(size=3,alpha=0.8, color = "black")+
+  scale_shape_manual(values = c(22,21,23) )+
+  xlab(paste0("PC1 (", signif(pvemerged3L$pve[1], 3), "%)")) +
+  ylab(paste0("PC2 (", signif(pvemerged3L$pve[2], 3), "%)")) +
+  scale_fill_manual(values = c("#332288","#44AA99","#E4CB4D","#88CCEE","#CC6677"))+
+  guides(fill=guide_legend(override.aes=list(shape=21)))+
+  labs(title = "")+
+  theme_bw()+
+  theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank())
+
+plot_pcamerged3L
+ggsave("../plots/PCA_merged3L.pdf", plot = plot_pcamerged3L,height = 4, width = 5)
+
+plot_pcamerged3L_PC3 <- ggplot(pcamerged3L, aes(as.numeric(PC1), as.numeric(PC3), fill = Source, shape = Mortality))+
+  geom_point(size=3,alpha=0.8, color = "black")+
+  scale_shape_manual(values = c(22,21,23) )+
+  xlab(paste0("PC1 (", signif(pvemerged3L$pve[1], 3), "%)")) +
+  ylab(paste0("PC3 (", signif(pvemerged3L$pve[3], 3), "%)")) +
+  scale_fill_manual(values = c("#332288","#44AA99","#E4CB4D","#88CCEE","#CC6677"))+
+  guides(fill=guide_legend(override.aes=list(shape=21)))+
+  labs(title = "")+
+  theme_bw()+
+  theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank())
+
+plot_pcamerged3L_PC3
+ggsave("../plots/pca/PCA_ehtbf1000g_3L_PC3.pdf", plot = plot_pcamerged3L_PC3,height = 4, width = 5)
+
+```
+
+For Chr3L merged EHTBF, Ag1000G, AT and GOUNDRY
+
+```{r}
+pcamerged3Lall <- read_table2("3L_all/3L_all_pcadata.eigenvec",col_names = FALSE)
+eigenvalmerged3Lall <- scan("3L_all/3L_all_pcadata.eigenval")
+
+# sort out the pca data of merged samples
+#remove nuisance column and row
+pcamerged3Lall <- pcamerged3Lall[-1,]
+# set names
+names(pcamerged3Lall)[1] <- "sample"
+names(pcamerged3Lall)[2:ncol(pcamerged3Lall)] <- paste0("PC", 1:(ncol(pcamerged3Lall)-1))
+pcamerged3Lall$dataset <- ifelse(grepl("^AB", pcamerged3Lall$sample), "Ag1000G BF",
+                  ifelse(grepl("^R", pcamerged3Lall$sample), "EHT BF",
+                  ifelse(grepl("^ATG1", pcamerged3Lall$sample), "AT",  
+                  ifelse(grepl("^ATG2|^ATG3", pcamerged3Lall$sample), "Goundry",
+                  NA))))
+
+
+#edit the sample name (needs to be more sophisticated for the eht bf samples)
+pcamerged3Lall$sample <- sapply(pcamerged3Lall$sample, function(x) {
+  if (startsWith(x, "A")) {
+    # Split by "_" and keep the first substring
+    strsplit(x, "_")[[1]][1]
+  } else if (startsWith(x, "R")) {
+    # Split by "_" and keep the first 5 substrings
+    paste(head(strsplit(x, "_")[[1]], 5), collapse = "_")
+  }  else {
+    # Default case: return the original value
+    x
+  }
+})
+
+
+#Add relevant metadata for plotting
+metadata_BF <- read_csv("../ag1000g/metadata_BF.csv")
+pcamerged3Lall <- pcamerged3Lall %>%
+  left_join(metadata_BF %>% select(sample_id, aim_species), 
+            by = c("sample" = "sample_id")) %>%
+  mutate(species = ifelse(is.na(aim_species), "unknown", aim_species)) %>%
+  select(-aim_species)
+
+pcamerged3Lall$Source <- case_when(
+  grepl("Tie", pcamerged3Lall$sample) ~ "This study",
+  grepl("Ten", pcamerged3Lall$sample) ~ "This study",
+  grepl("arabiensis", pcamerged3Lall$species) ~ "Ag1000G - An. arabiensis",
+  grepl("coluzzii", pcamerged3Lall$species) ~ "Ag1000G - An. coluzzii",
+  grepl("gambiae", pcamerged3Lall$species) ~ "Ag1000G - An. gambiae",
+  grepl("AT", pcamerged3Lall$dataset) ~ "AT",
+  grepl("Goundry", pcamerged3Lall$dataset) ~ "Goundry",
+  TRUE ~ NA_character_
+)
+
+pcamerged3Lall$Mortality <- case_when(
+  grepl("prior_72h", pcamerged3Lall$sample) ~ "Within 72h",
+  grepl("after_72", pcamerged3Lall$sample) ~ "After 72h",
+  grepl("Ag1000G BF", pcamerged3Lall$dataset) ~ "Ag1000G NA",
+  TRUE ~ NA_character_
+)
+
+
+pvemerged3Lall <- data.frame(PC = 1:10, pve = eigenvalmerged3Lall/sum(eigenvalmerged3Lall)*100)
+plot_pvemerged3Lall <- ggplot(pvemerged3Lall, aes(PC, pve))+ 
+  geom_bar(stat = "identity")+ 
+  ylab("Percentage Variance Explained")+ 
+  theme_light()
+
+plot_pvemerged3Lall
+ggsave("../plots/elbow_3L_all.pdf", plot = plot_pvemerged3Lall)
+
+
+plot_pcamerged3Lall <- ggplot(pcamerged3Lall, aes(as.numeric(PC1), as.numeric(PC2), fill = Source))+
+  geom_point(shape = 21, size = 3, alpha = 0.8, color = "black")+
+  xlab(paste0("PC1 (", signif(pvemerged3Lall$pve[1], 3), "%)")) +
+  ylab(paste0("PC2 (", signif(pvemerged3Lall$pve[2], 3), "%)")) +
+  scale_fill_manual(values = c( "#FFC20A","#88CCEE", "#332288", "#D62728", "#9400D3", "#55C89F", "#007F00"))+
+  guides(fill=guide_legend(override.aes=list(shape=21)))+
+  labs(title = "")+
+  theme_bw()+
+  theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank())
+
+plot_pcamerged3Lall
+ggsave("../plots/pca/PCA_all_3L_PC2.pdf", plot = plot_pcamerged3Lall,height = 4, width = 6)
+
+
+plot_pcamerged3Lall_PC3 <- ggplot(pcamerged3Lall, aes(as.numeric(PC1), as.numeric(PC3), fill = Source))+
+  geom_point(shape = 21, size = 3, alpha = 0.8, color = "black")+
+  xlab(paste0("PC1 (", signif(pvemerged3Lall$pve[1], 3), "%)")) +
+  ylab(paste0("PC3 (", signif(pvemerged3Lall$pve[3], 3), "%)")) +
+  scale_fill_manual(values = c( "#FFC20A","#88CCEE", "#332288", "#D62728", "#9400D3", "#55C89F", "#007F00"))+
+  guides(fill=guide_legend(override.aes=list(shape=21)))+
+  labs(title = "")+
+  theme_bw()+
+  theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank())
+
+plot_pcamerged3Lall_PC3
+ggsave("../plots/pca/PCA_all_3L_PC3.pdf", plot = plot_pcamerged3Lall_PC3,height = 4, width = 6)
+```
+
+Chromosome 3L mergede our Tengrela and Tengrela Vicky
+
+```{r}
+pca3L <- read_table2("3L_ehtbfcoluzzii_vickytengrela/3L_coluzzii_vickytengrela_pcadata.eigenvec", col_names = FALSE)
+eigenval3L <- scan("3L_ehtbfcoluzzii_vickytengrela/3L_coluzzii_vickytengrela_pcadata.eigenval")
+
+# sort out the pca data of just our data
+# remove nuisance column
+pca3L <- pca3L[-1,]
+# set names
+names(pca3L)[1] <- "ind"
+sample_names <- read.delim("../stuff/samplesets/samples_ehtbfcoluzzii_vickytengrela.txt", header = F)
+pca3L$ind <- sample_names$V1
+#pca3L$ind <- substr(pca3L$ind, 1, 23)
+
+names(pca3L)[2:ncol(pca3L)] <- paste0("PC", 1:(ncol(pca3L)-1))
+
+# sort out the individual metadata
+# bednet
+net<- rep(NA, length(pca3L$ind))
+net[grep("IG2", pca3L$ind)] <- "IG2"
+net[grep("PND", pca3L$ind)] <- "PermaNet Dual"
+net[grep("Tengrela", pca3L$ind)] <- "Pyrethroid Only"
+
+# location
+loc<- rep(NA, length(pca3L$ind))
+loc[grep("Ten", pca3L$ind)] <- "Tengrela"
+loc[grep("Tie", pca3L$ind)] <- "Tiefora"
+
+
+# mortality
+mort <- rep(NA, length(pca3L$ind))
+mort[grep("prior_72h", pca3L$ind)] <- "Within 72h"
+mort[grep("after_72h", pca3L$ind)] <- "After 72h"
+mort[grep("Tengrela", pca3L$ind)] <- "Unknown (2019)"
+
+# origin
+origin <- rep(NA, length(pca3L$ind))
+origin[grep("R0", pca3L$ind)] <- "This Study (2023)"
+origin[grep("Tengrela", pca3L$ind)] <- "Tengrela (2019)"
+
+
+pca3L <- as.tibble(data.frame(pca3L, net, mort, origin))
+
+pve3L <- data.frame(PC = 1:10, pve = eigenval3L/sum(eigenval3L)*100)
+plot_pve3L <- ggplot(pve3L, aes(PC, pve))+ 
+  geom_bar(stat = "identity")+ 
+  ylab("Percentage Variance Explained")+ 
+  theme_light()
+plot_pve3L
+
+ggsave("../plots/ehtbf_coluzzii/pca/elbow_merged_3L_ehtbfcoluzziii_vickytengrela.pdf", plot = plot_pve3L)
+
+plot_pca3L <- ggplot(pca3L, aes(as.numeric(PC1), as.numeric(PC2), shape = net, fill = origin))+
+  geom_point(size=3, alpha = 0.8)+
+  scale_shape_manual(values = c(21, 22,25) )+
+  xlab(paste0("PC1 (", signif(pve3L$pve[1], 3), "%)")) +
+  ylab(paste0("PC2 (", signif(pve3L$pve[2], 3), "%)")) +
+  scale_fill_manual(values = c("#88CCEE","#CC6677"))+
+  guides(fill=guide_legend(override.aes=list(shape=21)))+
+  labs(shape ="Bed Net", fill = "Origin")+
+  theme_bw()+
+  theme(axis.line = element_line(colour = "black"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    panel.border = element_blank(),
+    panel.background = element_blank())
+plot_pca3L
+
+ggsave("../plots/ehtbf_coluzzii/pca/pca_merged_3L_ehtbfcoluzzii_vickytengrela.pdf", plot = plot_pca3L, height = 4, width = 5)
+```
+
